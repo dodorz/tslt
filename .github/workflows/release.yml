@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags:
       - 'v*'
@@ -10,8 +11,18 @@ permissions:
   contents: write
 
 jobs:
-  build-and-release:
+  build:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package_suffix: x86_64
+            msvc_arch: x64
+          - package_suffix: x86
+            msvc_arch: amd64_x86
+          - package_suffix: arm64
+            msvc_arch: amd64_arm64
 
     steps:
       - name: Checkout
@@ -19,29 +30,48 @@ jobs:
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: ${{ matrix.msvc_arch }}
 
       - name: Configure
         shell: pwsh
-        run: cmake -S . -B build -G "Ninja Multi-Config"
+        run: cmake -S . -B "build/${{ matrix.package_suffix }}" -G "Ninja Multi-Config"
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release
+        run: cmake --build "build/${{ matrix.package_suffix }}" --config Release
 
       - name: Package
         shell: pwsh
         run: |
-          $tag = "${{ github.ref_name }}"
-          $version = $tag.StartsWith("v") ? $tag.Substring(1) : $tag
-          $packageName = "tslt-$version-windows-x64"
+          $refName = "${{ github.ref_name }}"
+          $version = $refName.StartsWith("v") ? $refName.Substring(1) : $refName
+          $packageName = "tslt-$version-${{ matrix.package_suffix }}"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
-          Copy-Item "build/Release/tslt.exe" "dist/tslt.exe"
+          Copy-Item "build/${{ matrix.package_suffix }}/Release/tslt.exe" "dist/tslt.exe"
           Copy-Item "config.ini.example" "dist/config.ini.example"
           Compress-Archive -Path "dist/*" -DestinationPath "$packageName.zip" -Force
-          "PACKAGE_NAME=$packageName" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Upload packaged artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tslt-${{ matrix.package_suffix }}-zip
+          path: tslt-*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: windows-latest
+
+    steps:
+      - name: Download packaged artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ env.PACKAGE_NAME }}.zip
+          files: artifacts/**/*.zip
           generate_release_notes: true
