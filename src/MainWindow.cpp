@@ -14,7 +14,7 @@
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"TsltMainWindow";
-constexpr wchar_t kWindowTitle[] = L"tslt";
+constexpr wchar_t kWindowTitle[] = L"LLM Translator";
 constexpr int kMinWindowWidth = 640;
 constexpr int kMinWindowHeight = 480;
 constexpr int kMargin = 16;
@@ -105,6 +105,15 @@ bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
         } else {
             SetTranslating(isTranslating_, L"Clipboard is empty.");
         }
+        return true;
+    case 'A':
+        if (!ctrlDown) {
+            break;
+        }
+        if (!IsEditControl(target)) {
+            break;
+        }
+        SendMessageW(target, EM_SETSEL, 0, -1);
         return true;
     case 'V':
         if (!ctrlDown) {
