@@ -1,0 +1,9 @@
+#ifndef TSLT_VERSION_H
+#define TSLT_VERSION_H
+
+#define TSLT_VERSION_MAJOR 0
+#define TSLT_VERSION_MINOR 0
+#define TSLT_VERSION_PATCH 1
+#define TSLT_VERSION_STRING L"0.0.1"
+
+#endif
