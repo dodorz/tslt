@@ -95,6 +95,9 @@ bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
         if (!ctrlDown) {
             break;
         }
+        if (IsEditControl(target) && HasSelectedText(target)) {
+            return false;
+        }
         if (const std::wstring text = ReadTextFromClipboard(); !text.empty()) {
             SetInputText(text);
             SetFocus(inputEdit_);
@@ -106,6 +109,9 @@ bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
     case 'V':
         if (!ctrlDown) {
             break;
+        }
+        if (target == inputEdit_) {
+            return false;
         }
         OnCopyClicked();
         return true;
@@ -322,8 +328,8 @@ void MainWindow::OnTranslateClicked() {
         return;
     }
 
-    const std::wstring inputText = TrimCopy(GetWindowTextCopy(inputEdit_));
-    if (inputText.empty()) {
+    const std::wstring inputText = GetWindowTextCopy(inputEdit_);
+    if (TrimCopy(inputText).empty()) {
         SetOutputText(L"");
         SetTranslating(false, L"Input text is empty.");
         return;
@@ -528,7 +534,8 @@ bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
     }
 
     EmptyClipboard();
-    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    const std::wstring normalized = NormalizeEditControlLineEndings(text);
+    const size_t bytes = (normalized.size() + 1) * sizeof(wchar_t);
     HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE, bytes);
     if (global == nullptr) {
         CloseClipboard();
@@ -542,7 +549,7 @@ bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
         return false;
     }
 
-    std::memcpy(memory, text.c_str(), bytes);
+    std::memcpy(memory, normalized.c_str(), bytes);
     GlobalUnlock(global);
 
     if (SetClipboardData(CF_UNICODETEXT, global) == nullptr) {
@@ -572,7 +579,7 @@ std::wstring MainWindow::ReadTextFromClipboard() const {
         return L"";
     }
 
-    std::wstring result(text);
+    std::wstring result = NormalizeEditControlLineEndings(text);
     GlobalUnlock(data);
     CloseClipboard();
     return result;
@@ -580,6 +587,21 @@ std::wstring MainWindow::ReadTextFromClipboard() const {
 
 bool MainWindow::IsWindowMessageTarget(HWND target) const {
     return target == hwnd_ || (target != nullptr && IsChild(hwnd_, target));
+}
+
+bool MainWindow::IsEditControl(HWND target) const {
+    return target == inputEdit_ || target == outputEdit_;
+}
+
+bool MainWindow::HasSelectedText(HWND target) const {
+    if (!IsEditControl(target)) {
+        return false;
+    }
+
+    DWORD start = 0;
+    DWORD end = 0;
+    SendMessageW(target, EM_GETSEL, reinterpret_cast<WPARAM>(&start), reinterpret_cast<LPARAM>(&end));
+    return start != end;
 }
 
 void MainWindow::ApplyVisualStyle() {

@@ -42,6 +42,8 @@ private:
     bool CopyTextToClipboard(const std::wstring& text);
     std::wstring ReadTextFromClipboard() const;
     bool IsWindowMessageTarget(HWND target) const;
+    bool IsEditControl(HWND target) const;
+    bool HasSelectedText(HWND target) const;
     void ApplyVisualStyle();
     void ApplyUiFont();
     const LlmProviderConfig* FindProviderConfig(const std::wstring& providerName) const;
