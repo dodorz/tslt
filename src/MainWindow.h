@@ -12,6 +12,7 @@ public:
 
     bool Create();
     HWND hwnd() const noexcept;
+    bool HandleGlobalShortcut(const MSG& msg);
 
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
@@ -36,8 +37,11 @@ private:
     void CenterWindow();
     bool IsNormalWindowState() const;
     std::wstring GetWindowTextCopy(HWND control) const;
+    void SetInputText(const std::wstring& text);
     void SetOutputText(const std::wstring& text);
     bool CopyTextToClipboard(const std::wstring& text);
+    std::wstring ReadTextFromClipboard() const;
+    bool IsWindowMessageTarget(HWND target) const;
     void ApplyVisualStyle();
     void ApplyUiFont();
     const LlmProviderConfig* FindProviderConfig(const std::wstring& providerName) const;
@@ -60,6 +64,7 @@ private:
     std::wstring initialInputText_;
     WindowState windowState_{};
     bool isTranslating_ = false;
+    DWORD lastEscapeTick_ = 0;
 };
 
 #endif

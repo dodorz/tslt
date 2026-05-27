@@ -23,6 +23,7 @@ constexpr int kBottomRowHeight = 24;
 constexpr int kButtonWidth = 112;
 constexpr int kComboWidth = 168;
 constexpr int kProviderComboWidth = 168;
+constexpr DWORD kEscapeExitIntervalMs = 500;
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
@@ -76,6 +77,65 @@ bool MainWindow::Create() {
 
 HWND MainWindow::hwnd() const noexcept {
     return hwnd_;
+}
+
+bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
+    if (msg.message != WM_KEYDOWN && msg.message != WM_SYSKEYDOWN) {
+        return false;
+    }
+
+    const HWND target = msg.hwnd;
+    if (!IsWindowMessageTarget(target)) {
+        return false;
+    }
+
+    const bool ctrlDown = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+    switch (msg.wParam) {
+    case 'C':
+        if (!ctrlDown) {
+            break;
+        }
+        if (const std::wstring text = ReadTextFromClipboard(); !text.empty()) {
+            SetInputText(text);
+            SetFocus(inputEdit_);
+            SetTranslating(isTranslating_, L"Loaded clipboard into input.");
+        } else {
+            SetTranslating(isTranslating_, L"Clipboard is empty.");
+        }
+        return true;
+    case 'V':
+        if (!ctrlDown) {
+            break;
+        }
+        OnCopyClicked();
+        return true;
+    case 'W':
+        if (!ctrlDown) {
+            break;
+        }
+        OnTranslateClicked();
+        return true;
+    case 'Q':
+        if (!ctrlDown) {
+            break;
+        }
+        OnClose();
+        return true;
+    case VK_ESCAPE: {
+        const DWORD now = GetTickCount();
+        if (now - lastEscapeTick_ <= kEscapeExitIntervalMs) {
+            OnClose();
+        } else {
+            lastEscapeTick_ = now;
+            SetTranslating(isTranslating_, L"Press Esc again to quit.");
+        }
+        return true;
+    }
+    default:
+        break;
+    }
+
+    return false;
 }
 
 LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -257,6 +317,7 @@ void MainWindow::OnDestroy() {
 }
 
 void MainWindow::OnTranslateClicked() {
+    lastEscapeTick_ = 0;
     if (isTranslating_) {
         return;
     }
@@ -450,6 +511,12 @@ std::wstring MainWindow::GetWindowTextCopy(HWND control) const {
     return std::wstring(buffer.data());
 }
 
+void MainWindow::SetInputText(const std::wstring& text) {
+    const std::wstring normalized = NormalizeEditControlLineEndings(text);
+    SetWindowTextW(inputEdit_, normalized.c_str());
+    SendMessageW(inputEdit_, EM_SETSEL, static_cast<WPARAM>(normalized.size()), static_cast<LPARAM>(normalized.size()));
+}
+
 void MainWindow::SetOutputText(const std::wstring& text) {
     const std::wstring normalized = NormalizeEditControlLineEndings(text);
     SetWindowTextW(outputEdit_, normalized.c_str());
@@ -486,6 +553,33 @@ bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
 
     CloseClipboard();
     return true;
+}
+
+std::wstring MainWindow::ReadTextFromClipboard() const {
+    if (!OpenClipboard(hwnd_)) {
+        return L"";
+    }
+
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
+    if (data == nullptr) {
+        CloseClipboard();
+        return L"";
+    }
+
+    const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(data));
+    if (text == nullptr) {
+        CloseClipboard();
+        return L"";
+    }
+
+    std::wstring result(text);
+    GlobalUnlock(data);
+    CloseClipboard();
+    return result;
+}
+
+bool MainWindow::IsWindowMessageTarget(HWND target) const {
+    return target == hwnd_ || (target != nullptr && IsChild(hwnd_, target));
 }
 
 void MainWindow::ApplyVisualStyle() {
