@@ -21,13 +21,15 @@ constexpr int kTopRowHeight = 32;
 constexpr int kBottomRowHeight = 24;
 constexpr int kButtonWidth = 112;
 constexpr int kComboWidth = 168;
+constexpr int kProviderComboWidth = 168;
 }
 
-MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath)
+MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
     : instance_(instance),
       appName_(std::move(appName)),
       config_(std::move(config)),
-      statePath_(std::move(statePath)) {
+      statePath_(std::move(statePath)),
+      initialInputText_(std::move(initialInputText)) {
 }
 
 bool MainWindow::Create() {
@@ -137,6 +139,10 @@ bool MainWindow::OnCreate() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TARGET_LANG), instance_, nullptr);
 
+    providerCombo_ = CreateWindowExW(0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_PROVIDER), instance_, nullptr);
+
     translateButton_ = CreateWindowExW(0, L"BUTTON", L"Translate",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSLATE), instance_, nullptr);
@@ -153,7 +159,7 @@ bool MainWindow::OnCreate() {
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
 
-    if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || translateButton_ == nullptr ||
+    if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || providerCombo_ == nullptr || translateButton_ == nullptr ||
         outputEdit_ == nullptr || copyButton_ == nullptr || statusStatic_ == nullptr) {
         return false;
     }
@@ -170,6 +176,23 @@ bool MainWindow::OnCreate() {
         }
     }
     SendMessageW(targetLangCombo_, CB_SETCURSEL, selectedIndex, 0);
+
+    int selectedProviderIndex = 0;
+    for (int i = 0; i < static_cast<int>(config_.llm.providers.size()); ++i) {
+        const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(i)];
+        SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(provider.displayName.c_str()));
+        if (provider.sectionName == config_.llm.provider) {
+            selectedProviderIndex = i;
+        }
+    }
+    if (!config_.llm.providers.empty()) {
+        SendMessageW(providerCombo_, CB_SETCURSEL, selectedProviderIndex, 0);
+        OnProviderChanged();
+    }
+
+    if (!initialInputText_.empty()) {
+        SetWindowTextW(inputEdit_, initialInputText_.c_str());
+    }
 
     ApplyWindowState();
     SetTranslating(false, config_.loadedPath.empty() ? L"Ready. config.ini not found." : L"Ready");
@@ -202,6 +225,11 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
     case IDC_TARGET_LANG:
         if (notifyCode == CBN_SELCHANGE) {
             OnTargetLanguageChanged();
+        }
+        break;
+    case IDC_PROVIDER:
+        if (notifyCode == CBN_SELCHANGE) {
+            OnProviderChanged();
         }
         break;
     default:
@@ -240,7 +268,8 @@ void MainWindow::OnTranslateClicked() {
     SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
     config_.translate.targetLanguage = languageBuffer;
 
-    if (TrimCopy(config_.llm.baseUrl).empty() || TrimCopy(config_.llm.apiKey).empty() || TrimCopy(config_.llm.model).empty()) {
+    const LlmProviderConfig* provider = FindProviderConfig(config_.llm.provider);
+    if (provider == nullptr || TrimCopy(provider->baseUrl).empty() || TrimCopy(provider->apiKey).empty() || TrimCopy(provider->model).empty()) {
         SetOutputText(L"LLM configuration is incomplete.");
         SetTranslating(false, L"LLM configuration is incomplete.");
         return;
@@ -248,9 +277,9 @@ void MainWindow::OnTranslateClicked() {
 
     TranslateRequest request;
     request.ownerHwnd = hwnd_;
-    request.baseUrl = config_.llm.baseUrl;
-    request.apiKey = config_.llm.apiKey;
-    request.model = config_.llm.model;
+    request.baseUrl = provider->baseUrl;
+    request.apiKey = provider->apiKey;
+    request.model = provider->model;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;
     request.temperature = config_.translate.temperature;
@@ -280,6 +309,15 @@ void MainWindow::OnTargetLanguageChanged() {
     config_.translate.targetLanguage = languageBuffer;
 }
 
+void MainWindow::OnProviderChanged() {
+    const int index = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
+    if (index == CB_ERR || index < 0 || index >= static_cast<int>(config_.llm.providers.size())) {
+        return;
+    }
+
+    config_.llm.provider = config_.llm.providers[static_cast<size_t>(index)].sectionName;
+}
+
 void MainWindow::OnTranslateDone(TranslateResult* result) {
     if (result != nullptr) {
         SetOutputText(result->translatedText);
@@ -303,11 +341,13 @@ void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
     const int statusY = clientHeight - kMargin - kBottomRowHeight;
     const int contentY = topY + kTopRowHeight + kMargin;
     const int contentHeight = statusY - contentY - kMargin;
-    const int topButtonsWidth = kComboWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
+    const int topButtonsWidth = kComboWidth + kMargin + kProviderComboWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
     const int outputHeight = contentHeight / 2;
     const int inputHeight = contentHeight - outputHeight - kMargin;
 
+    const int providerX = kMargin + kComboWidth + kMargin;
     MoveWindow(targetLangCombo_, kMargin, topY, kComboWidth, 400, TRUE);
+    MoveWindow(providerCombo_, providerX, topY, kProviderComboWidth, 400, TRUE);
     MoveWindow(translateButton_, clientWidth - kMargin - (kButtonWidth * 2) - kMargin, topY, kButtonWidth, kTopRowHeight, TRUE);
     MoveWindow(copyButton_, clientWidth - kMargin - kButtonWidth, topY, kButtonWidth, kTopRowHeight, TRUE);
     MoveWindow(inputEdit_, kMargin, contentY, clientWidth - (kMargin * 2), inputHeight, TRUE);
@@ -320,6 +360,7 @@ void MainWindow::SetTranslating(bool translating, const std::wstring& statusText
     isTranslating_ = translating;
     EnableWindow(translateButton_, translating ? FALSE : TRUE);
     EnableWindow(targetLangCombo_, translating ? FALSE : TRUE);
+    EnableWindow(providerCombo_, translating ? FALSE : TRUE);
     if (!statusText.empty()) {
         SetWindowTextW(statusStatic_, statusText.c_str());
     }
@@ -405,7 +446,8 @@ std::wstring MainWindow::GetWindowTextCopy(HWND control) const {
 }
 
 void MainWindow::SetOutputText(const std::wstring& text) {
-    SetWindowTextW(outputEdit_, text.c_str());
+    const std::wstring normalized = NormalizeEditControlLineEndings(text);
+    SetWindowTextW(outputEdit_, normalized.c_str());
 }
 
 bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
@@ -443,6 +485,7 @@ bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
 
 void MainWindow::ApplyVisualStyle() {
     ApplyThemeToControl(targetLangCombo_, L"Explorer", nullptr);
+    ApplyThemeToControl(providerCombo_, L"Explorer", nullptr);
     ApplyThemeToControl(translateButton_, L"Explorer", nullptr);
     ApplyThemeToControl(copyButton_, L"Explorer", nullptr);
     ApplyThemeToControl(inputEdit_, L"Explorer", nullptr);
@@ -461,10 +504,19 @@ void MainWindow::ApplyUiFont() {
         return;
     }
 
-    const HWND controls[] = {inputEdit_, targetLangCombo_, translateButton_, outputEdit_, copyButton_, statusStatic_};
+    const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, translateButton_, outputEdit_, copyButton_, statusStatic_};
     for (HWND control : controls) {
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
     }
+}
+
+const LlmProviderConfig* MainWindow::FindProviderConfig(const std::wstring& providerName) const {
+    for (const LlmProviderConfig& provider : config_.llm.providers) {
+        if (provider.sectionName == providerName) {
+            return &provider;
+        }
+    }
+    return nullptr;
 }
 
 void MainWindow::ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList) {

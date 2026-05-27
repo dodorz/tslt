@@ -8,7 +8,7 @@
 
 class MainWindow {
 public:
-    MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath);
+    MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText);
 
     bool Create();
     HWND hwnd() const noexcept;
@@ -26,6 +26,7 @@ private:
     void OnTranslateClicked();
     void OnCopyClicked();
     void OnTargetLanguageChanged();
+    void OnProviderChanged();
     void OnTranslateDone(struct TranslateResult* result);
     void OnTranslateError(struct TranslateError* error);
     void LayoutControls(int clientWidth, int clientHeight);
@@ -39,6 +40,7 @@ private:
     bool CopyTextToClipboard(const std::wstring& text);
     void ApplyVisualStyle();
     void ApplyUiFont();
+    const LlmProviderConfig* FindProviderConfig(const std::wstring& providerName) const;
     void ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList);
 
 private:
@@ -47,6 +49,7 @@ private:
     HWND hwnd_ = nullptr;
     HWND inputEdit_ = nullptr;
     HWND targetLangCombo_ = nullptr;
+    HWND providerCombo_ = nullptr;
     HWND translateButton_ = nullptr;
     HWND outputEdit_ = nullptr;
     HWND copyButton_ = nullptr;
@@ -54,6 +57,7 @@ private:
     HFONT uiFont_ = nullptr;
     AppConfig config_;
     std::wstring statePath_;
+    std::wstring initialInputText_;
     WindowState windowState_{};
     bool isTranslating_ = false;
 };

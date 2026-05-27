@@ -2,13 +2,20 @@
 #define TSLT_APP_CONFIG_H
 
 #include <string>
+#include <vector>
 #include <windows.h>
 
-struct LlmConfig {
-    std::wstring provider;
+struct LlmProviderConfig {
+    std::wstring sectionName;
+    std::wstring displayName;
     std::wstring baseUrl;
     std::wstring apiKey;
     std::wstring model;
+};
+
+struct LlmConfig {
+    std::wstring provider;
+    std::vector<LlmProviderConfig> providers;
 };
 
 struct TranslateConfig {
@@ -48,6 +55,7 @@ private:
 
     std::wstring ReadString(const std::wstring& filePath, const std::wstring& section, const std::wstring& key,
         const std::wstring& defaultValue) const;
+    std::vector<std::wstring> ReadSectionNames(const std::wstring& filePath) const;
     int ReadInt(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, int defaultValue) const;
     double ReadDouble(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, double defaultValue) const;
 

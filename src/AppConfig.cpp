@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <shlobj.h>
+#include <vector>
 
 #include "StringUtils.h"
 
@@ -24,12 +25,28 @@ AppConfig ConfigStore::Load() {
     }
 
     config.llm.provider = ReadString(config.loadedPath, L"LLM", L"provider", L"");
-    const std::wstring providerSection = config.llm.provider.empty() ? L"" : L"LLM." + config.llm.provider;
 
-    if (!providerSection.empty()) {
-        config.llm.baseUrl = ReadString(config.loadedPath, providerSection, L"base_url", L"");
-        config.llm.apiKey = ReadString(config.loadedPath, providerSection, L"api_key", L"");
-        config.llm.model = ReadString(config.loadedPath, providerSection, L"model", L"");
+    const auto sectionNames = ReadSectionNames(config.loadedPath);
+    for (const std::wstring& sectionName : sectionNames) {
+        constexpr wchar_t prefix[] = L"LLM.";
+        if (sectionName.rfind(prefix, 0) != 0 || sectionName.size() <= std::size(prefix) - 1) {
+            continue;
+        }
+
+        LlmProviderConfig provider;
+        provider.sectionName = sectionName.substr(std::size(prefix) - 1);
+        provider.displayName = ReadString(config.loadedPath, sectionName, L"name", L"");
+        if (provider.displayName.empty()) {
+            provider.displayName = provider.sectionName;
+        }
+        provider.baseUrl = ReadString(config.loadedPath, sectionName, L"base_url", L"");
+        provider.apiKey = ReadString(config.loadedPath, sectionName, L"api_key", L"");
+        provider.model = ReadString(config.loadedPath, sectionName, L"model", L"");
+        config.llm.providers.push_back(std::move(provider));
+    }
+
+    if (config.llm.provider.empty() && !config.llm.providers.empty()) {
+        config.llm.provider = config.llm.providers.front().sectionName;
     }
 
     config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
@@ -123,6 +140,23 @@ std::wstring ConfigStore::ReadString(const std::wstring& filePath, const std::ws
     wchar_t buffer[2048] = {};
     GetPrivateProfileStringW(section.c_str(), key.c_str(), defaultValue.c_str(), buffer, static_cast<DWORD>(std::size(buffer)), filePath.c_str());
     return TrimCopy(buffer);
+}
+
+std::vector<std::wstring> ConfigStore::ReadSectionNames(const std::wstring& filePath) const {
+    std::vector<wchar_t> buffer(8192, L'\0');
+    DWORD copied = GetPrivateProfileSectionNamesW(buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
+    while (copied >= buffer.size() - 2) {
+        buffer.resize(buffer.size() * 2, L'\0');
+        copied = GetPrivateProfileSectionNamesW(buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
+    }
+
+    std::vector<std::wstring> names;
+    const wchar_t* current = buffer.data();
+    while (*current != L'\0') {
+        names.emplace_back(current);
+        current += names.back().size() + 1;
+    }
+    return names;
 }
 
 int ConfigStore::ReadInt(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, int defaultValue) const {

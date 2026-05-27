@@ -46,6 +46,33 @@ inline std::string WideToUtf8(const std::wstring& value) {
     return result;
 }
 
+inline std::wstring NormalizeEditControlLineEndings(const std::wstring& value) {
+    std::wstring normalized;
+    normalized.reserve(value.size() + 16);
+
+    for (size_t i = 0; i < value.size(); ++i) {
+        const wchar_t ch = value[i];
+        if (ch == L'\r') {
+            normalized.push_back(L'\r');
+            if (i + 1 < value.size() && value[i + 1] == L'\n') {
+                normalized.push_back(L'\n');
+                ++i;
+            } else {
+                normalized.push_back(L'\n');
+            }
+            continue;
+        }
+        if (ch == L'\n') {
+            normalized.push_back(L'\r');
+            normalized.push_back(L'\n');
+            continue;
+        }
+        normalized.push_back(ch);
+    }
+
+    return normalized;
+}
+
 inline std::string JsonEscapeUtf8(const std::wstring& value) {
     const std::string input = WideToUtf8(value);
     std::string output;

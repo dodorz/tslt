@@ -2,6 +2,7 @@
 provider = Qwen
 
 [LLM.Qwen]
+name = SiliconFlow Qwen
 base_url = https://api.siliconflow.cn/v1
 api_key = sk-XXXXX
 model = Qwen/Qwen3.5-4B
