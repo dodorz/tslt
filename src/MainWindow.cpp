@@ -9,11 +9,10 @@
 #include "Messages.h"
 #include "StringUtils.h"
 #include "TranslatorClient.h"
-#include "Version.h"
 
 namespace {
 constexpr wchar_t kWindowClassName[] = L"TsltMainWindow";
-constexpr wchar_t kWindowTitle[] = L"tslt " TSLT_VERSION_STRING;
+constexpr wchar_t kWindowTitle[] = L"tslt";
 constexpr int kMinWindowWidth = 640;
 constexpr int kMinWindowHeight = 480;
 constexpr int kMargin = 12;

@@ -5,25 +5,19 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+configure_file(src/version.rc.in version.rc @ONLY)
+
 add_executable(tslt WIN32
     src/main.cpp
     src/AppConfig.cpp
     src/MainWindow.cpp
     src/TranslatorClient.cpp
-    src/version.rc
+    "${CMAKE_CURRENT_BINARY_DIR}/version.rc"
 )
 
 target_include_directories(tslt PRIVATE src)
 
-target_compile_definitions(tslt PRIVATE
-    UNICODE
-    _UNICODE
-    WIN32_LEAN_AND_MEAN
-    NOMINMAX
-    TSLT_VERSION_MAJOR=${PROJECT_VERSION_MAJOR}
-    TSLT_VERSION_MINOR=${PROJECT_VERSION_MINOR}
-    TSLT_VERSION_PATCH=${PROJECT_VERSION_PATCH}
-)
+target_compile_definitions(tslt PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 
 target_link_libraries(tslt PRIVATE winhttp user32 gdi32 comctl32 shell32)
 

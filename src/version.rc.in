@@ -1,6 +1,6 @@
 1 VERSIONINFO
-FILEVERSION 0,0,1,0
-PRODUCTVERSION 0,0,1,0
+FILEVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
+PRODUCTVERSION @PROJECT_VERSION_MAJOR@,@PROJECT_VERSION_MINOR@,@PROJECT_VERSION_PATCH@,0
 FILEFLAGSMASK 0x3fL
 #ifdef _DEBUG
 FILEFLAGS 0x1L
@@ -17,11 +17,11 @@ BEGIN
         BEGIN
             VALUE "CompanyName", ""
             VALUE "FileDescription", "tslt"
-            VALUE "FileVersion", "0.0.1"
+            VALUE "FileVersion", "@PROJECT_VERSION@"
             VALUE "InternalName", "tslt"
             VALUE "OriginalFilename", "tslt.exe"
             VALUE "ProductName", "tslt"
-            VALUE "ProductVersion", "0.0.1"
+            VALUE "ProductVersion", "@PROJECT_VERSION@"
         END
     END
     BLOCK "VarFileInfo"
