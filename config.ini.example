@@ -1,0 +1,17 @@
+[LLM]
+provider = Qwen
+
+[LLM.Qwen]
+base_url = https://api.siliconflow.cn/v1
+api_key = sk-XXXXX
+model = Qwen/Qwen3.5-4B
+
+[LLM.DSK]
+base_url = https://api.deepseek.com
+api_key = sk-xxxxxx
+model = deepseek-v4-flash
+
+[Translate]
+target_language = zh-CN
+source_language = auto
+temperature = 0.2

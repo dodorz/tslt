@@ -1,0 +1,142 @@
+#include "AppConfig.h"
+
+#include <filesystem>
+#include <shlobj.h>
+
+#include "StringUtils.h"
+
+namespace {
+constexpr wchar_t kConfigFileName[] = L"config.ini";
+constexpr wchar_t kStateFileName[] = L"state.dat";
+}
+
+ConfigStore::ConfigStore(std::wstring appName)
+    : appName_(std::move(appName)) {
+}
+
+AppConfig ConfigStore::Load() {
+    AppConfig config;
+    config.loadedPath = ResolveConfigPath();
+
+    if (config.loadedPath.empty()) {
+        config.loadedPath = GetAppDataDirectory() + L"\\" + kConfigFileName;
+        return config;
+    }
+
+    config.llm.provider = ReadString(config.loadedPath, L"LLM", L"provider", L"");
+    const std::wstring providerSection = config.llm.provider.empty() ? L"" : L"LLM." + config.llm.provider;
+
+    if (!providerSection.empty()) {
+        config.llm.baseUrl = ReadString(config.loadedPath, providerSection, L"base_url", L"");
+        config.llm.apiKey = ReadString(config.loadedPath, providerSection, L"api_key", L"");
+        config.llm.model = ReadString(config.loadedPath, providerSection, L"model", L"");
+    }
+
+    config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
+    config.translate.targetLanguage = ReadString(config.loadedPath, L"Translate", L"target_language", L"zh-CN");
+    config.translate.temperature = ReadDouble(config.loadedPath, L"Translate", L"temperature", 0.2);
+    return config;
+}
+
+std::wstring ConfigStore::GetStatePath() const {
+    return GetAppDataDirectory() + L"\\" + kStateFileName;
+}
+
+bool ConfigStore::SaveWindowState(const WindowState& state) const {
+    const std::wstring path = GetStatePath();
+    EnsureParentDirectory(path);
+
+    const std::wstring section = L"Window";
+    const auto writeInt = [&](const wchar_t* key, int value) {
+        return WritePrivateProfileStringW(section.c_str(), key, std::to_wstring(value).c_str(), path.c_str()) != 0;
+    };
+
+    bool ok = true;
+    ok = writeInt(L"x", state.x) && ok;
+    ok = writeInt(L"y", state.y) && ok;
+    ok = writeInt(L"width", state.width) && ok;
+    ok = writeInt(L"height", state.height) && ok;
+    ok = writeInt(L"maximized", state.maximized ? 1 : 0) && ok;
+    return ok;
+}
+
+WindowState ConfigStore::LoadWindowState() const {
+    WindowState state;
+    const std::wstring path = GetStatePath();
+    if (!FileExists(path)) {
+        return state;
+    }
+
+    state.x = ReadInt(path, L"Window", L"x", state.x);
+    state.y = ReadInt(path, L"Window", L"y", state.y);
+    state.width = ReadInt(path, L"Window", L"width", state.width);
+    state.height = ReadInt(path, L"Window", L"height", state.height);
+    state.maximized = ReadInt(path, L"Window", L"maximized", 0) != 0;
+    return state;
+}
+
+std::wstring ConfigStore::ResolveConfigPath() const {
+    const std::wstring exePath = GetExeDirectory() + L"\\" + kConfigFileName;
+    if (FileExists(exePath)) {
+        return exePath;
+    }
+
+    const std::wstring appDataPath = GetAppDataDirectory() + L"\\" + kConfigFileName;
+    if (FileExists(appDataPath)) {
+        return appDataPath;
+    }
+
+    return L"";
+}
+
+std::wstring ConfigStore::GetAppDataDirectory() const {
+    PWSTR roamingPath = nullptr;
+    std::wstring result;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &roamingPath)) && roamingPath != nullptr) {
+        result = std::wstring(roamingPath) + L"\\" + appName_;
+        CoTaskMemFree(roamingPath);
+    }
+    return result;
+}
+
+std::wstring ConfigStore::GetExeDirectory() const {
+    wchar_t buffer[MAX_PATH] = {};
+    const DWORD length = GetModuleFileNameW(nullptr, buffer, MAX_PATH);
+    std::wstring path(buffer, buffer + length);
+    const size_t pos = path.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) {
+        return L".";
+    }
+    return path.substr(0, pos);
+}
+
+void ConfigStore::EnsureParentDirectory(const std::wstring& filePath) const {
+    const size_t pos = filePath.find_last_of(L"\\/");
+    if (pos == std::wstring::npos) {
+        return;
+    }
+    std::filesystem::create_directories(filePath.substr(0, pos));
+}
+
+std::wstring ConfigStore::ReadString(const std::wstring& filePath, const std::wstring& section, const std::wstring& key,
+    const std::wstring& defaultValue) const {
+    wchar_t buffer[2048] = {};
+    GetPrivateProfileStringW(section.c_str(), key.c_str(), defaultValue.c_str(), buffer, static_cast<DWORD>(std::size(buffer)), filePath.c_str());
+    return TrimCopy(buffer);
+}
+
+int ConfigStore::ReadInt(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, int defaultValue) const {
+    return static_cast<int>(GetPrivateProfileIntW(section.c_str(), key.c_str(), defaultValue, filePath.c_str()));
+}
+
+double ConfigStore::ReadDouble(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, double defaultValue) const {
+    const std::wstring value = ReadString(filePath, section, key, L"");
+    if (value.empty()) {
+        return defaultValue;
+    }
+    try {
+        return std::stod(value);
+    } catch (...) {
+        return defaultValue;
+    }
+}

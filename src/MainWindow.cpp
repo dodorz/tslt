@@ -1,0 +1,434 @@
+#include "MainWindow.h"
+
+#include <cstring>
+#include <commctrl.h>
+#include <shellapi.h>
+#include <vector>
+
+#include "Ids.h"
+#include "Messages.h"
+#include "StringUtils.h"
+#include "TranslatorClient.h"
+
+namespace {
+constexpr wchar_t kWindowClassName[] = L"TsltMainWindow";
+constexpr wchar_t kWindowTitle[] = L"tslt";
+constexpr int kMinWindowWidth = 640;
+constexpr int kMinWindowHeight = 480;
+constexpr int kMargin = 12;
+constexpr int kTopRowHeight = 28;
+constexpr int kBottomRowHeight = 24;
+constexpr int kButtonWidth = 100;
+constexpr int kComboWidth = 160;
+}
+
+MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath)
+    : instance_(instance),
+      appName_(std::move(appName)),
+      config_(std::move(config)),
+      statePath_(std::move(statePath)) {
+}
+
+bool MainWindow::Create() {
+    INITCOMMONCONTROLSEX icc{};
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_STANDARD_CLASSES;
+    InitCommonControlsEx(&icc);
+
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = MainWindow::WndProc;
+    wc.hInstance = instance_;
+    wc.lpszClassName = kWindowClassName;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) {
+        return false;
+    }
+
+    windowState_ = WindowState{};
+
+    hwnd_ = CreateWindowExW(
+        0,
+        kWindowClassName,
+        kWindowTitle,
+        WS_OVERLAPPEDWINDOW,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        windowState_.width,
+        windowState_.height,
+        nullptr,
+        nullptr,
+        instance_,
+        this);
+
+    return hwnd_ != nullptr;
+}
+
+HWND MainWindow::hwnd() const noexcept {
+    return hwnd_;
+}
+
+LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    MainWindow* self = nullptr;
+
+    if (msg == WM_NCCREATE) {
+        auto* createStruct = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        self = reinterpret_cast<MainWindow*>(createStruct->lpCreateParams);
+        self->hwnd_ = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(self));
+    } else {
+        self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    }
+
+    if (self != nullptr) {
+        return self->HandleMessage(msg, wParam, lParam);
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
+    switch (msg) {
+    case WM_NCCREATE:
+        return DefWindowProcW(hwnd_, msg, wParam, lParam);
+    case WM_CREATE:
+        return OnCreate() ? 0 : -1;
+    case WM_SIZE:
+        OnSize(static_cast<UINT>(wParam), LOWORD(lParam), HIWORD(lParam));
+        return 0;
+    case WM_MOVE:
+        OnMove(static_cast<int>(static_cast<short>(LOWORD(lParam))), static_cast<int>(static_cast<short>(HIWORD(lParam))));
+        return 0;
+    case WM_COMMAND:
+        OnCommand(LOWORD(wParam), HIWORD(wParam), reinterpret_cast<HWND>(lParam));
+        return 0;
+    case WM_GETMINMAXINFO: {
+        auto* info = reinterpret_cast<MINMAXINFO*>(lParam);
+        info->ptMinTrackSize.x = kMinWindowWidth;
+        info->ptMinTrackSize.y = kMinWindowHeight;
+        return 0;
+    }
+    case WM_CLOSE:
+        OnClose();
+        return 0;
+    case WM_DESTROY:
+        OnDestroy();
+        return 0;
+    case WM_APP_TRANSLATE_DONE:
+        OnTranslateDone(reinterpret_cast<TranslateResult*>(lParam));
+        return 0;
+    case WM_APP_TRANSLATE_ERROR:
+        OnTranslateError(reinterpret_cast<TranslateError*>(lParam));
+        return 0;
+    default:
+        return DefWindowProcW(hwnd_, msg, wParam, lParam);
+    }
+}
+
+bool MainWindow::OnCreate() {
+    inputEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_INPUT), instance_, nullptr);
+
+    targetLangCombo_ = CreateWindowExW(0, L"COMBOBOX", L"",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TARGET_LANG), instance_, nullptr);
+
+    translateButton_ = CreateWindowExW(0, L"BUTTON", L"Translate",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSLATE), instance_, nullptr);
+
+    outputEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+        WS_CHILD | WS_VISIBLE | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_OUTPUT), instance_, nullptr);
+
+    copyButton_ = CreateWindowExW(0, L"BUTTON", L"Copy",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_COPY), instance_, nullptr);
+
+    statusStatic_ = CreateWindowExW(0, L"STATIC", L"Ready",
+        WS_CHILD | WS_VISIBLE | SS_LEFT,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
+
+    if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || translateButton_ == nullptr ||
+        outputEdit_ == nullptr || copyButton_ == nullptr || statusStatic_ == nullptr) {
+        return false;
+    }
+
+    const wchar_t* languages[] = {L"zh-CN", L"en", L"ja", L"ko", L"fr", L"de"};
+    int selectedIndex = 0;
+    for (int i = 0; i < static_cast<int>(std::size(languages)); ++i) {
+        SendMessageW(targetLangCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(languages[i]));
+        if (config_.translate.targetLanguage == languages[i]) {
+            selectedIndex = i;
+        }
+    }
+    SendMessageW(targetLangCombo_, CB_SETCURSEL, selectedIndex, 0);
+
+    ApplyWindowState();
+    SetTranslating(false, config_.loadedPath.empty() ? L"Ready. config.ini not found." : L"Ready");
+    return true;
+}
+
+void MainWindow::OnSize(UINT sizeType, int width, int height) {
+    if (sizeType != SIZE_MINIMIZED) {
+        LayoutControls(width, height);
+        UpdateWindowState();
+    }
+}
+
+void MainWindow::OnMove(int, int) {
+    UpdateWindowState();
+}
+
+void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
+    switch (controlId) {
+    case IDC_TRANSLATE:
+        if (notifyCode == BN_CLICKED) {
+            OnTranslateClicked();
+        }
+        break;
+    case IDC_COPY:
+        if (notifyCode == BN_CLICKED) {
+            OnCopyClicked();
+        }
+        break;
+    case IDC_TARGET_LANG:
+        if (notifyCode == CBN_SELCHANGE) {
+            OnTargetLanguageChanged();
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+void MainWindow::OnClose() {
+    UpdateWindowState();
+    ConfigStore(appName_).SaveWindowState(windowState_);
+    DestroyWindow(hwnd_);
+}
+
+void MainWindow::OnDestroy() {
+    PostQuitMessage(0);
+}
+
+void MainWindow::OnTranslateClicked() {
+    if (isTranslating_) {
+        return;
+    }
+
+    const std::wstring inputText = TrimCopy(GetWindowTextCopy(inputEdit_));
+    if (inputText.empty()) {
+        SetOutputText(L"");
+        SetTranslating(false, L"Input text is empty.");
+        return;
+    }
+
+    const int index = static_cast<int>(SendMessageW(targetLangCombo_, CB_GETCURSEL, 0, 0));
+    wchar_t languageBuffer[64] = {};
+    SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
+    config_.translate.targetLanguage = languageBuffer;
+
+    if (TrimCopy(config_.llm.baseUrl).empty() || TrimCopy(config_.llm.apiKey).empty() || TrimCopy(config_.llm.model).empty()) {
+        SetOutputText(L"LLM configuration is incomplete.");
+        SetTranslating(false, L"LLM configuration is incomplete.");
+        return;
+    }
+
+    TranslateRequest request;
+    request.ownerHwnd = hwnd_;
+    request.baseUrl = config_.llm.baseUrl;
+    request.apiKey = config_.llm.apiKey;
+    request.model = config_.llm.model;
+    request.sourceLanguage = config_.translate.sourceLanguage;
+    request.targetLanguage = config_.translate.targetLanguage;
+    request.temperature = config_.translate.temperature;
+    request.inputText = inputText;
+
+    SetOutputText(L"");
+    SetTranslating(true, L"Translating...");
+    StartTranslateWorker(std::move(request));
+}
+
+void MainWindow::OnCopyClicked() {
+    const std::wstring text = GetWindowTextCopy(outputEdit_);
+    if (text.empty()) {
+        SetTranslating(isTranslating_, L"Nothing to copy.");
+        return;
+    }
+    SetTranslating(isTranslating_, CopyTextToClipboard(text) ? L"Copied." : L"Copy failed.");
+}
+
+void MainWindow::OnTargetLanguageChanged() {
+    const int index = static_cast<int>(SendMessageW(targetLangCombo_, CB_GETCURSEL, 0, 0));
+    if (index == CB_ERR) {
+        return;
+    }
+    wchar_t languageBuffer[64] = {};
+    SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
+    config_.translate.targetLanguage = languageBuffer;
+}
+
+void MainWindow::OnTranslateDone(TranslateResult* result) {
+    if (result != nullptr) {
+        SetOutputText(result->translatedText);
+        delete result;
+    }
+    SetTranslating(false, L"Done.");
+}
+
+void MainWindow::OnTranslateError(TranslateError* error) {
+    if (error != nullptr) {
+        SetOutputText(error->message);
+        SetTranslating(false, error->message);
+        delete error;
+        return;
+    }
+    SetTranslating(false, L"Translation failed.");
+}
+
+void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
+    const int topY = kMargin;
+    const int statusY = clientHeight - kMargin - kBottomRowHeight;
+    const int contentY = topY + kTopRowHeight + kMargin;
+    const int contentHeight = statusY - contentY - kMargin;
+    const int topButtonsWidth = kComboWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
+    const int outputHeight = contentHeight / 2;
+    const int inputHeight = contentHeight - outputHeight - kMargin;
+
+    MoveWindow(targetLangCombo_, kMargin, topY, kComboWidth, 400, TRUE);
+    MoveWindow(translateButton_, clientWidth - kMargin - (kButtonWidth * 2) - kMargin, topY, kButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(copyButton_, clientWidth - kMargin - kButtonWidth, topY, kButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(inputEdit_, kMargin, contentY, clientWidth - (kMargin * 2), inputHeight, TRUE);
+    MoveWindow(outputEdit_, kMargin, contentY + inputHeight + kMargin, clientWidth - (kMargin * 2), outputHeight, TRUE);
+    MoveWindow(statusStatic_, kMargin, statusY, clientWidth - (kMargin * 2), kBottomRowHeight, TRUE);
+    (void)topButtonsWidth;
+}
+
+void MainWindow::SetTranslating(bool translating, const std::wstring& statusText) {
+    isTranslating_ = translating;
+    EnableWindow(translateButton_, translating ? FALSE : TRUE);
+    EnableWindow(targetLangCombo_, translating ? FALSE : TRUE);
+    if (!statusText.empty()) {
+        SetWindowTextW(statusStatic_, statusText.c_str());
+    }
+}
+
+void MainWindow::UpdateWindowState() {
+    if (hwnd_ == nullptr) {
+        return;
+    }
+
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (!GetWindowPlacement(hwnd_, &placement)) {
+        return;
+    }
+
+    windowState_.maximized = placement.showCmd == SW_MAXIMIZE;
+    if (placement.showCmd != SW_NORMAL) {
+        return;
+    }
+
+    RECT rect{};
+    if (!GetWindowRect(hwnd_, &rect)) {
+        return;
+    }
+
+    windowState_.x = rect.left;
+    windowState_.y = rect.top;
+    windowState_.width = rect.right - rect.left;
+    windowState_.height = rect.bottom - rect.top;
+}
+
+void MainWindow::ApplyWindowState() {
+    windowState_ = ConfigStore(appName_).LoadWindowState();
+
+    bool centered = false;
+    if (windowState_.x == CW_USEDEFAULT || windowState_.y == CW_USEDEFAULT) {
+        CenterWindow();
+        centered = true;
+    } else {
+        SetWindowPos(hwnd_, nullptr, windowState_.x, windowState_.y, windowState_.width, windowState_.height,
+            SWP_NOZORDER | SWP_NOACTIVATE);
+        RECT rect{};
+        GetWindowRect(hwnd_, &rect);
+        HMONITOR monitor = MonitorFromRect(&rect, MONITOR_DEFAULTTONULL);
+        if (monitor == nullptr) {
+            CenterWindow();
+            centered = true;
+        }
+    }
+
+    ShowWindow(hwnd_, windowState_.maximized ? SW_MAXIMIZE : SW_SHOW);
+    UpdateWindow(hwnd_);
+    if (centered) {
+        UpdateWindowState();
+    }
+}
+
+void MainWindow::CenterWindow() {
+    RECT workArea{};
+    SystemParametersInfoW(SPI_GETWORKAREA, 0, &workArea, 0);
+
+    const int width = windowState_.width;
+    const int height = windowState_.height;
+    const int x = workArea.left + ((workArea.right - workArea.left) - width) / 2;
+    const int y = workArea.top + ((workArea.bottom - workArea.top) - height) / 2;
+
+    SetWindowPos(hwnd_, nullptr, x, y, width, height, SWP_NOZORDER | SWP_NOACTIVATE);
+}
+
+bool MainWindow::IsNormalWindowState() const {
+    WINDOWPLACEMENT placement{};
+    placement.length = sizeof(placement);
+    if (!GetWindowPlacement(hwnd_, &placement)) {
+        return false;
+    }
+    return placement.showCmd == SW_NORMAL;
+}
+
+std::wstring MainWindow::GetWindowTextCopy(HWND control) const {
+    const auto buffer = ReadEditText(control);
+    return std::wstring(buffer.data());
+}
+
+void MainWindow::SetOutputText(const std::wstring& text) {
+    SetWindowTextW(outputEdit_, text.c_str());
+}
+
+bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
+    if (!OpenClipboard(hwnd_)) {
+        return false;
+    }
+
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    HGLOBAL global = GlobalAlloc(GMEM_MOVEABLE, bytes);
+    if (global == nullptr) {
+        CloseClipboard();
+        return false;
+    }
+
+    void* memory = GlobalLock(global);
+    if (memory == nullptr) {
+        GlobalFree(global);
+        CloseClipboard();
+        return false;
+    }
+
+    std::memcpy(memory, text.c_str(), bytes);
+    GlobalUnlock(global);
+
+    if (SetClipboardData(CF_UNICODETEXT, global) == nullptr) {
+        GlobalFree(global);
+        CloseClipboard();
+        return false;
+    }
+
+    CloseClipboard();
+    return true;
+}

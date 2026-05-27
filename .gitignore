@@ -1,0 +1,11 @@
+build/
+.vs/
+.vscode/
+out/
+*.exe
+*.obj
+*.o
+*.log
+*.user
+*.suo
+config.ini
