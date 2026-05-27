@@ -1,5 +1,6 @@
 #include "TranslatorClient.h"
 
+#include <stdexcept>
 #include <thread>
 #include <vector>
 #include <winhttp.h>

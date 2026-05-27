@@ -1,0 +1,45 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 20,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "displayName": "Default Visual Studio 2026 x64",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/vs2026-x64",
+      "cacheVariables": {
+        "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/vs2026-x64"
+      }
+    },
+    {
+      "name": "vs2026-x64",
+      "displayName": "Visual Studio 2026 x64",
+      "inherits": "default"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "displayName": "Default Release build with Visual Studio 2026 x64",
+      "configurePreset": "default",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2026-x64-release",
+      "displayName": "Build Release with Visual Studio 2026 x64",
+      "configurePreset": "vs2026-x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "vs2026-x64-debug",
+      "displayName": "Build Debug with Visual Studio 2026 x64",
+      "configurePreset": "vs2026-x64",
+      "configuration": "Debug"
+    }
+  ]
+}
