@@ -8,6 +8,7 @@
 
 #include "Ids.h"
 #include "Messages.h"
+#include "Resource.h"
 #include "StringUtils.h"
 #include "TranslatorClient.h"
 
@@ -43,6 +44,10 @@ bool MainWindow::Create() {
     wc.lpfnWndProc = MainWindow::WndProc;
     wc.hInstance = instance_;
     wc.lpszClassName = kWindowClassName;
+    wc.hIcon = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+        GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR));
+    wc.hIconSm = static_cast<HICON>(LoadImageW(instance_, MAKEINTRESOURCEW(IDI_APP_ICON), IMAGE_ICON,
+        GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR));
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
     wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
 

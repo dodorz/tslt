@@ -63,14 +63,23 @@ Rules:
 
 ## Release
 
-A GitHub Actions workflow at `.github/workflows/release.yml` creates a Windows release zip when you push a tag matching `v*`.
+A GitHub Actions workflow at `.github/workflows/release.yml` creates a Windows release zip when you push a semantic version tag. Both `0.0.2` and `v0.0.2` will trigger the workflow.
 
-Example:
+Examples:
+
+```bash
+git tag 0.0.2
+git push origin 0.0.2
+```
 
 ```bash
 git tag v0.0.2
 git push origin v0.0.2
 ```
+
+The uploaded asset is always named without the `v` prefix:
+
+- `tslt-0.0.2-windows-x64.zip`
 
 ## License
 

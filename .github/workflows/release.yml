@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '*.*.*'
 
 permissions:
   contents: write
@@ -31,7 +32,8 @@ jobs:
         shell: pwsh
         run: |
           $tag = "${{ github.ref_name }}"
-          $packageName = "tslt-$tag-windows-x64"
+          $version = $tag.StartsWith("v") ? $tag.Substring(1) : $tag
+          $packageName = "tslt-$version-windows-x64"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item "build/Release/tslt.exe" "dist/tslt.exe"
           Copy-Item "config.ini.example" "dist/config.ini.example"
