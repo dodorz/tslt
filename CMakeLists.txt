@@ -19,7 +19,7 @@ target_include_directories(tslt PRIVATE src)
 
 target_compile_definitions(tslt PRIVATE UNICODE _UNICODE WIN32_LEAN_AND_MEAN NOMINMAX)
 
-target_link_libraries(tslt PRIVATE winhttp user32 gdi32 comctl32 shell32)
+target_link_libraries(tslt PRIVATE winhttp user32 gdi32 comctl32 shell32 uxtheme)
 
 if(MINGW)
     target_link_options(tslt PRIVATE -municode)

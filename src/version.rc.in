@@ -29,3 +29,5 @@ BEGIN
         VALUE "Translation", 0x0409, 1200
     END
 END
+
+1 RT_MANIFEST "@CMAKE_CURRENT_SOURCE_DIR@/src/app.manifest"

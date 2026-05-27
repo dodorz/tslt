@@ -3,6 +3,7 @@
 #include <cstring>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <uxtheme.h>
 #include <vector>
 
 #include "Ids.h"
@@ -15,11 +16,11 @@ constexpr wchar_t kWindowClassName[] = L"TsltMainWindow";
 constexpr wchar_t kWindowTitle[] = L"tslt";
 constexpr int kMinWindowWidth = 640;
 constexpr int kMinWindowHeight = 480;
-constexpr int kMargin = 12;
-constexpr int kTopRowHeight = 28;
+constexpr int kMargin = 16;
+constexpr int kTopRowHeight = 32;
 constexpr int kBottomRowHeight = 24;
-constexpr int kButtonWidth = 100;
-constexpr int kComboWidth = 160;
+constexpr int kButtonWidth = 112;
+constexpr int kComboWidth = 168;
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath)
@@ -157,6 +158,9 @@ bool MainWindow::OnCreate() {
         return false;
     }
 
+    ApplyVisualStyle();
+    ApplyUiFont();
+
     const wchar_t* languages[] = {L"zh-CN", L"en", L"ja", L"ko", L"fr", L"de"};
     int selectedIndex = 0;
     for (int i = 0; i < static_cast<int>(std::size(languages)); ++i) {
@@ -212,6 +216,10 @@ void MainWindow::OnClose() {
 }
 
 void MainWindow::OnDestroy() {
+    if (uiFont_ != nullptr) {
+        DeleteObject(uiFont_);
+        uiFont_ = nullptr;
+    }
     PostQuitMessage(0);
 }
 
@@ -431,4 +439,36 @@ bool MainWindow::CopyTextToClipboard(const std::wstring& text) {
 
     CloseClipboard();
     return true;
+}
+
+void MainWindow::ApplyVisualStyle() {
+    ApplyThemeToControl(targetLangCombo_, L"Explorer", nullptr);
+    ApplyThemeToControl(translateButton_, L"Explorer", nullptr);
+    ApplyThemeToControl(copyButton_, L"Explorer", nullptr);
+    ApplyThemeToControl(inputEdit_, L"Explorer", nullptr);
+    ApplyThemeToControl(outputEdit_, L"Explorer", nullptr);
+}
+
+void MainWindow::ApplyUiFont() {
+    NONCLIENTMETRICSW metrics{};
+    metrics.cbSize = sizeof(metrics);
+    if (!SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, sizeof(metrics), &metrics, 0)) {
+        return;
+    }
+
+    uiFont_ = CreateFontIndirectW(&metrics.lfMessageFont);
+    if (uiFont_ == nullptr) {
+        return;
+    }
+
+    const HWND controls[] = {inputEdit_, targetLangCombo_, translateButton_, outputEdit_, copyButton_, statusStatic_};
+    for (HWND control : controls) {
+        SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    }
+}
+
+void MainWindow::ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList) {
+    if (control != nullptr) {
+        SetWindowTheme(control, subAppName, subIdList);
+    }
 }

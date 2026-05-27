@@ -37,6 +37,9 @@ private:
     std::wstring GetWindowTextCopy(HWND control) const;
     void SetOutputText(const std::wstring& text);
     bool CopyTextToClipboard(const std::wstring& text);
+    void ApplyVisualStyle();
+    void ApplyUiFont();
+    void ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList);
 
 private:
     HINSTANCE instance_ = nullptr;
@@ -48,6 +51,7 @@ private:
     HWND outputEdit_ = nullptr;
     HWND copyButton_ = nullptr;
     HWND statusStatic_ = nullptr;
+    HFONT uiFont_ = nullptr;
     AppConfig config_;
     std::wstring statePath_;
     WindowState windowState_{};
