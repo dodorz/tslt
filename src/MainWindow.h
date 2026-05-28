@@ -1,6 +1,7 @@
 #ifndef TSLT_MAIN_WINDOW_H
 #define TSLT_MAIN_WINDOW_H
 
+#include <atomic>
 #include <string>
 #include <windows.h>
 
@@ -48,6 +49,9 @@ private:
     void ApplyUiFont();
     const LlmProviderConfig* FindProviderConfig(const std::wstring& providerName) const;
     void ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList);
+    void StartConfigWatcher();
+    void StopConfigWatcher();
+    void OnConfigChanged();
 
 private:
     HINSTANCE instance_ = nullptr;
@@ -62,11 +66,15 @@ private:
     HWND statusStatic_ = nullptr;
     HFONT uiFont_ = nullptr;
     AppConfig config_;
+    std::wstring configPath_;
     std::wstring statePath_;
     std::wstring initialInputText_;
     WindowState windowState_{};
     bool isTranslating_ = false;
     DWORD lastEscapeTick_ = 0;
+    HANDLE configWatcherThread_ = nullptr;
+    HANDLE configWatcherStop_ = nullptr;
+    std::atomic<bool> configWatcherRunning_{false};
 };
 
 #endif
