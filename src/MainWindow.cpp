@@ -13,7 +13,6 @@
 #include "TranslatorClient.h"
 
 namespace {
-constexpr wchar_t kWindowClassName[] = L"TsltMainWindow";
 constexpr wchar_t kWindowTitle[] = L"LLM Translator";
 constexpr int kMinWindowWidth = 640;
 constexpr int kMinWindowHeight = 480;
@@ -30,10 +29,8 @@ MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig confi
     : instance_(instance),
       appName_(std::move(appName)),
       config_(std::move(config)),
-      configPath_(config_.loadedPath),
       statePath_(std::move(statePath)),
-      initialInputText_(std::move(initialInputText)),
-      configWatcherStop_(CreateEventW(nullptr, TRUE, FALSE, nullptr)) {
+      initialInputText_(std::move(initialInputText)) {
 }
 
 bool MainWindow::Create() {
@@ -207,9 +204,21 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_APP_TRANSLATE_ERROR:
         OnTranslateError(reinterpret_cast<TranslateError*>(lParam));
         return 0;
-    case WM_APP_CONFIG_CHANGED:
-        OnConfigChanged();
-        return 0;
+    case WM_COPYDATA: {
+        auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
+        if (cds != nullptr && cds->dwData == 1 && cds->lpData != nullptr && cds->cbData > 0) {
+            const auto* data = static_cast<const wchar_t*>(cds->lpData);
+            const size_t charCount = cds->cbData / sizeof(wchar_t);
+            if (charCount > 0 && data[charCount - 1] == L'\0') {
+                SetInputText(std::wstring(data, charCount - 1));
+            } else {
+                SetInputText(std::wstring(data, charCount));
+            }
+            SetFocus(inputEdit_);
+            SetTranslating(isTranslating_, L"Loaded text from new instance.");
+        }
+        return TRUE;
+    }
     default:
         return DefWindowProcW(hwnd_, msg, wParam, lParam);
     }
@@ -281,7 +290,6 @@ bool MainWindow::OnCreate() {
 
     ApplyWindowState();
     SetTranslating(false, config_.loadedPath.empty() ? L"Ready. config.ini not found." : L"Ready");
-    StartConfigWatcher();
     return true;
 }
 
@@ -330,7 +338,6 @@ void MainWindow::OnClose() {
 }
 
 void MainWindow::OnDestroy() {
-    StopConfigWatcher();
     if (uiFont_ != nullptr) {
         DeleteObject(uiFont_);
         uiFont_ = nullptr;
@@ -660,191 +667,4 @@ void MainWindow::ApplyThemeToControl(HWND control, const wchar_t* subAppName, co
     if (control != nullptr) {
         SetWindowTheme(control, subAppName, subIdList);
     }
-}
-
-void MainWindow::StartConfigWatcher() {
-    std::wstring watchDir;
-    std::wstring watchFile;
-
-    if (!configPath_.empty()) {
-        const size_t pos = configPath_.find_last_of(L"\\/");
-        watchDir = (pos != std::wstring::npos) ? configPath_.substr(0, pos) : L".";
-        watchFile = configPath_.substr(pos + 1);
-    } else {
-        watchDir = ConfigStore(appName_).GetStatePath();
-        const size_t pos = watchDir.find_last_of(L"\\/");
-        if (pos != std::wstring::npos) {
-            watchDir = watchDir.substr(0, pos);
-        }
-        watchFile = L"config.ini";
-    }
-
-    if (watchDir.empty()) {
-        return;
-    }
-
-    HANDLE dirHandle = CreateFileW(
-        watchDir.c_str(),
-        FILE_LIST_DIRECTORY,
-        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-        nullptr,
-        OPEN_EXISTING,
-        FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OVERLAPPED,
-        nullptr);
-    if (dirHandle == INVALID_HANDLE_VALUE) {
-        return;
-    }
-
-    struct WatcherData {
-        HANDLE dir;
-        std::wstring file;
-        HWND hwnd;
-        HANDLE stopEvent;
-        std::atomic<bool>* running;
-    };
-
-    auto* data = new WatcherData{dirHandle, std::move(watchFile), hwnd_, configWatcherStop_, &configWatcherRunning_};
-
-    configWatcherRunning_.store(true);
-    configWatcherThread_ = CreateThread(
-        nullptr,
-        0,
-        [](LPVOID param) -> DWORD {
-            auto* d = static_cast<WatcherData*>(param);
-            HANDLE dir = d->dir;
-            std::wstring file = std::move(d->file);
-            HWND hwnd = d->hwnd;
-            HANDLE stopEvent = d->stopEvent;
-            std::atomic<bool>* running = d->running;
-            delete d;
-
-            OVERLAPPED overlapped{};
-            overlapped.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            if (overlapped.hEvent == nullptr) {
-                CloseHandle(dir);
-                running->store(false);
-                return 1;
-            }
-
-            alignas(DWORD) BYTE buffer[4096];
-            HANDLE handles[] = {overlapped.hEvent, stopEvent};
-
-            while (running->load()) {
-                ResetEvent(overlapped.hEvent);
-                if (!ReadDirectoryChangesW(dir, buffer, sizeof(buffer), FALSE,
-                        FILE_NOTIFY_CHANGE_LAST_WRITE | FILE_NOTIFY_CHANGE_CREATION,
-                        nullptr, &overlapped, nullptr)) {
-                    break;
-                }
-
-                const DWORD waitResult = WaitForMultipleObjects(2, handles, FALSE, INFINITE);
-                if (waitResult == WAIT_OBJECT_0) {
-                    DWORD bytesReturned = 0;
-                    if (!GetOverlappedResult(dir, &overlapped, &bytesReturned, FALSE)) {
-                        continue;
-                    }
-                    if (bytesReturned == 0) {
-                        continue;
-                    }
-
-                    auto* info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(buffer);
-                    bool found = false;
-                    while (true) {
-                        const std::wstring name(info->FileName,
-                            info->FileNameLength / sizeof(wchar_t));
-                        if (_wcsicmp(name.c_str(), file.c_str()) == 0) {
-                            found = true;
-                            break;
-                        }
-                        if (info->NextEntryOffset == 0) {
-                            break;
-                        }
-                        info = reinterpret_cast<FILE_NOTIFY_INFORMATION*>(
-                            reinterpret_cast<BYTE*>(info) + info->NextEntryOffset);
-                    }
-
-                    if (found) {
-                        PostMessageW(hwnd, WM_APP_CONFIG_CHANGED, 0, 0);
-                    }
-                } else {
-                    break;
-                }
-            }
-
-            CloseHandle(overlapped.hEvent);
-            CloseHandle(dir);
-            running->store(false);
-            return 0;
-        },
-        data,
-        0,
-        nullptr);
-
-    if (configWatcherThread_ == nullptr) {
-        configWatcherRunning_.store(false);
-        CloseHandle(dirHandle);
-        delete data;
-    }
-}
-
-void MainWindow::StopConfigWatcher() {
-    if (configWatcherThread_ == nullptr) {
-        return;
-    }
-
-    if (configWatcherStop_ != nullptr) {
-        SetEvent(configWatcherStop_);
-    }
-
-    HANDLE handles[] = {configWatcherThread_};
-    while (true) {
-        const DWORD result = MsgWaitForMultipleObjects(1, handles, FALSE, INFINITE, QS_ALLINPUT);
-        if (result == WAIT_OBJECT_0) {
-            break;
-        }
-        MSG msg;
-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE)) {
-            TranslateMessage(&msg);
-            DispatchMessageW(&msg);
-        }
-    }
-
-    CloseHandle(configWatcherThread_);
-    configWatcherThread_ = nullptr;
-}
-
-void MainWindow::OnConfigChanged() {
-    const int oldProviderIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
-    std::wstring savedProviderSection;
-    if (oldProviderIndex >= 0 && oldProviderIndex < static_cast<int>(config_.llm.providers.size())) {
-        savedProviderSection = config_.llm.providers[static_cast<size_t>(oldProviderIndex)].sectionName;
-    }
-
-    ConfigStore store(appName_);
-    AppConfig newConfig = store.Load();
-
-    if (newConfig.loadedPath.empty() && !configPath_.empty()) {
-        return;
-    }
-
-    config_ = std::move(newConfig);
-    configPath_ = config_.loadedPath;
-
-    SendMessageW(providerCombo_, CB_RESETCONTENT, 0, 0);
-    int newProviderIndex = 0;
-    for (int i = 0; i < static_cast<int>(config_.llm.providers.size()); ++i) {
-        const auto& provider = config_.llm.providers[static_cast<size_t>(i)];
-        SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(provider.displayName.c_str()));
-        if (provider.sectionName == savedProviderSection) {
-            newProviderIndex = i;
-        } else if (provider.sectionName == config_.llm.provider) {
-            newProviderIndex = i;
-        }
-    }
-    if (!config_.llm.providers.empty()) {
-        SendMessageW(providerCombo_, CB_SETCURSEL, newProviderIndex, 0);
-        OnProviderChanged();
-    }
-
-    SetTranslating(isTranslating_, L"Config reloaded.");
 }

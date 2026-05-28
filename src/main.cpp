@@ -11,6 +11,53 @@
 #include "StringUtils.h"
 
 namespace {
+bool HasCommandLineFlag(PCWSTR cmdLine, const wchar_t* flag) {
+    const std::wstring args(cmdLine);
+    const std::wstring flagStr(flag);
+    const size_t pos = args.find(flagStr);
+    if (pos == std::wstring::npos) {
+        return false;
+    }
+    const size_t after = pos + flagStr.size();
+    return after >= args.size() || args[after] == L' ' || args[after] == L'\t';
+}
+
+HWND FindExistingInstance() {
+    return FindWindowW(MainWindow::kWindowClassName, nullptr);
+}
+
+bool ActivateWindow(HWND hwnd) {
+    const DWORD foregroundThreadId = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
+    const DWORD currentThreadId = GetCurrentThreadId();
+
+    bool attached = false;
+    if (foregroundThreadId != currentThreadId) {
+        attached = AttachThreadInput(currentThreadId, foregroundThreadId, TRUE) != 0;
+    }
+
+    bool result = SetForegroundWindow(hwnd) != 0;
+
+    if (IsIconic(hwnd)) {
+        ShowWindow(hwnd, SW_RESTORE);
+    } else {
+        ShowWindow(hwnd, SW_SHOW);
+    }
+
+    if (attached) {
+        AttachThreadInput(currentThreadId, foregroundThreadId, FALSE);
+    }
+
+    return result;
+}
+
+bool SendTextToInstance(HWND hwnd, const std::wstring& text) {
+    COPYDATASTRUCT cds{};
+    cds.dwData = 1;
+    cds.cbData = static_cast<DWORD>((text.size() + 1) * sizeof(wchar_t));
+    cds.lpData = const_cast<wchar_t*>(text.c_str());
+    return SendMessageW(hwnd, WM_COPYDATA, 0, reinterpret_cast<LPARAM>(&cds)) != 0;
+}
+
 std::wstring ReadPipedInput() {
     HANDLE stdinHandle = GetStdHandle(STD_INPUT_HANDLE);
     if (stdinHandle == nullptr || stdinHandle == INVALID_HANDLE_VALUE) {
@@ -76,11 +123,23 @@ std::wstring ReadPipedInput() {
 }
 }
 
-int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR, int) {
+int WINAPI wWinMain(HINSTANCE instance, HINSTANCE, PWSTR cmdLine, int) {
     const std::wstring appName = L"tslt";
+    std::wstring initialInputText = ReadPipedInput();
+
+    if (!HasCommandLineFlag(cmdLine, L"--new")) {
+        HWND existing = FindExistingInstance();
+        if (existing != nullptr) {
+            if (!initialInputText.empty()) {
+                SendTextToInstance(existing, initialInputText);
+            }
+            ActivateWindow(existing);
+            return 0;
+        }
+    }
+
     ConfigStore configStore(appName);
     AppConfig config = configStore.Load();
-    std::wstring initialInputText = ReadPipedInput();
 
     MainWindow window(instance, appName, std::move(config), configStore.GetStatePath(), std::move(initialInputText));
     if (!window.Create()) {
