@@ -9,6 +9,26 @@
 namespace {
 constexpr wchar_t kConfigFileName[] = L"config.ini";
 constexpr wchar_t kStateFileName[] = L"state.dat";
+
+std::wstring ResolveProviderName(const std::wstring& configuredProvider, const std::vector<LlmProviderConfig>& providers) {
+    if (providers.empty()) {
+        return configuredProvider;
+    }
+
+    for (const LlmProviderConfig& provider : providers) {
+        if (provider.sectionName == configuredProvider) {
+            return provider.sectionName;
+        }
+    }
+
+    for (const LlmProviderConfig& provider : providers) {
+        if (provider.displayName == configuredProvider) {
+            return provider.sectionName;
+        }
+    }
+
+    return providers.front().sectionName;
+}
 }
 
 ConfigStore::ConfigStore(std::wstring appName)
@@ -45,8 +65,8 @@ AppConfig ConfigStore::Load() {
         config.llm.providers.push_back(std::move(provider));
     }
 
-    if (config.llm.provider.empty() && !config.llm.providers.empty()) {
-        config.llm.provider = config.llm.providers.front().sectionName;
+    if (!config.llm.providers.empty()) {
+        config.llm.provider = ResolveProviderName(config.llm.provider, config.llm.providers);
     }
 
     config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
