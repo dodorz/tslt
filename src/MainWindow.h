@@ -34,6 +34,7 @@ private:
     void OnTranslateError(struct TranslateError* error);
     void LayoutControls(int clientWidth, int clientHeight);
     void SetTranslating(bool translating, const std::wstring& statusText = L"");
+    void UpdateCopyButtonState();
     void UpdateWindowState();
     void ApplyWindowState();
     void CenterWindow();
@@ -68,6 +69,7 @@ private:
     std::wstring initialInputText_;
     WindowState windowState_{};
     bool isTranslating_ = false;
+    bool hasCopyableOutput_ = false;
     DWORD lastEscapeTick_ = 0;
 };
 

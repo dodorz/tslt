@@ -353,6 +353,7 @@ void MainWindow::OnTranslateClicked() {
 
     const std::wstring inputText = GetWindowTextCopy(inputEdit_);
     if (TrimCopy(inputText).empty()) {
+        hasCopyableOutput_ = false;
         SetOutputText(L"");
         SetTranslating(false, L"Input text is empty.");
         return;
@@ -365,6 +366,7 @@ void MainWindow::OnTranslateClicked() {
 
     const LlmProviderConfig* provider = FindProviderConfig(config_.llm.provider);
     if (provider == nullptr || TrimCopy(provider->baseUrl).empty() || TrimCopy(provider->apiKey).empty() || TrimCopy(provider->model).empty()) {
+        hasCopyableOutput_ = false;
         SetOutputText(L"LLM configuration is incomplete.");
         SetTranslating(false, L"LLM configuration is incomplete.");
         return;
@@ -380,6 +382,7 @@ void MainWindow::OnTranslateClicked() {
     request.temperature = config_.translate.temperature;
     request.inputText = inputText;
 
+    hasCopyableOutput_ = false;
     SetOutputText(L"");
     SetTranslating(true, L"Translating...");
     StartTranslateWorker(std::move(request));
@@ -415,19 +418,24 @@ void MainWindow::OnProviderChanged() {
 
 void MainWindow::OnTranslateDone(TranslateResult* result) {
     if (result != nullptr) {
+        hasCopyableOutput_ = !TrimCopy(result->translatedText).empty();
         SetOutputText(result->translatedText);
         delete result;
+    } else {
+        hasCopyableOutput_ = false;
     }
     SetTranslating(false, L"Done.");
 }
 
 void MainWindow::OnTranslateError(TranslateError* error) {
     if (error != nullptr) {
+        hasCopyableOutput_ = false;
         SetOutputText(error->message);
         SetTranslating(false, error->message);
         delete error;
         return;
     }
+    hasCopyableOutput_ = false;
     SetTranslating(false, L"Translation failed.");
 }
 
@@ -456,9 +464,14 @@ void MainWindow::SetTranslating(bool translating, const std::wstring& statusText
     EnableWindow(translateButton_, translating ? FALSE : TRUE);
     EnableWindow(targetLangCombo_, translating ? FALSE : TRUE);
     EnableWindow(providerCombo_, translating ? FALSE : TRUE);
+    UpdateCopyButtonState();
     if (!statusText.empty()) {
         SetWindowTextW(statusStatic_, statusText.c_str());
     }
+}
+
+void MainWindow::UpdateCopyButtonState() {
+    EnableWindow(copyButton_, (!isTranslating_ && hasCopyableOutput_) ? TRUE : FALSE);
 }
 
 void MainWindow::UpdateWindowState() {
