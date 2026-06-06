@@ -30,6 +30,7 @@ private:
     void OnCopyClicked();
     void OnTargetLanguageChanged();
     void OnProviderChanged();
+    void OnSystemPromptClicked();
     void OnTranslateDone(struct TranslateResult* result);
     void OnTranslateError(struct TranslateError* error);
     void LayoutControls(int clientWidth, int clientHeight);
@@ -59,6 +60,7 @@ private:
     HWND inputEdit_ = nullptr;
     HWND targetLangCombo_ = nullptr;
     HWND providerCombo_ = nullptr;
+    HWND systemPromptButton_ = nullptr;
     HWND translateButton_ = nullptr;
     HWND outputEdit_ = nullptr;
     HWND copyButton_ = nullptr;
@@ -71,6 +73,7 @@ private:
     bool isTranslating_ = false;
     bool hasCopyableOutput_ = false;
     DWORD lastEscapeTick_ = 0;
+    std::wstring systemPromptOverride_;
 };
 
 #endif

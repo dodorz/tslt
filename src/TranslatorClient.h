@@ -9,6 +9,7 @@ struct TranslateRequest {
     std::wstring baseUrl;
     std::wstring apiKey;
     std::wstring model;
+    std::wstring systemPrompt;
     std::wstring sourceLanguage;
     std::wstring targetLanguage;
     double temperature = 0.2;
@@ -24,5 +25,6 @@ struct TranslateError {
 };
 
 void StartTranslateWorker(TranslateRequest request);
+void AbortActiveTranslation();
 
 #endif

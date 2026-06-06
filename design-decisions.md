@@ -15,7 +15,7 @@
 - 窗口/UI：Win32 API
 - 网络：WinHTTP
 - 配置格式：INI
-- 主配置文件：`config.ini`
+- 主配置文件：`tslt.ini`
 - 运行时状态文件：`state.dat`
 - 第一版界面：纯 Win32 控件，不使用 WebView2
 - 并发模型：后台线程发起翻译请求，主线程仅处理 UI
@@ -43,22 +43,22 @@
 
 ## 配置文件规则
 
-### `config.ini`
+### `tslt.ini`
 
 用途：保存稳定配置，可手工维护，可用 git 备份与同步。
 
 查找顺序：
 
-1. 先查找程序同目录下的 `config.ini`
-2. 如果不存在，再查找 `%AppData%/<appname>/config.ini`
+1. 先查找程序同目录下的 `tslt.ini`
+2. 如果不存在，再查找 `%AppData%/<appname>/tslt.ini`
 3. 如果两处都不存在，使用内置默认值启动
 
 读取规则：
 
 - 只读取第一处命中的配置文件
-- 如果程序目录下存在 `config.ini`，则不再继续查找 `%AppData%`
+- 如果程序目录下存在 `tslt.ini`，则不再继续查找 `%AppData%`
 - 保存配置时写回当前生效的配置文件路径
-- 如果启动时两处都不存在，则首次保存写入 `%AppData%/<appname>/config.ini`
+- 如果启动时两处都不存在，则首次保存写入 `%AppData%/<appname>/tslt.ini`
 
 ### LLM 配置格式
 
@@ -84,7 +84,7 @@ model = deepseek-v4-flash
 - 从对应节中读取：`base_url`、`api_key`、`model`
 - `provider` 按原样使用，不做大小写归一化
 
-附加配置建议保留在 `config.ini` 中：
+附加配置建议保留在 `tslt.ini` 中：
 
 ```ini
 [Translate]
@@ -129,9 +129,9 @@ maximized = 0
 
 ## 配置与状态分离原则
 
-- `config.ini` 只保存稳定、希望被同步和手工维护的配置
+- `tslt.ini` 只保存稳定、希望被同步和手工维护的配置
 - `state.dat` 只保存运行中的 UI 状态
-- 窗口位置与尺寸不写入 `config.ini`
+- 窗口位置与尺寸不写入 `tslt.ini`
 
 ## 窗口与线程模型
 
@@ -317,7 +317,7 @@ struct WindowState {
 
 ## 第一版交互时序
 
-1. 启动时加载 `config.ini`
+1. 启动时加载 `tslt.ini`
 2. 启动时加载 `%AppData%/<appname>/state.dat`
 3. 创建并显示主窗口
 4. 用户点击 Translate
@@ -335,4 +335,4 @@ struct WindowState {
 - `MainWindow` 类接口与 `WndProc` 转发实现
 - `state.dat` 的恢复与屏幕外位置修正规则
 - `WinHTTP` 请求构造与错误处理细节
-- `config.ini` / `state.dat` 的读写模块接口
+- `tslt.ini` / `state.dat` 的读写模块接口

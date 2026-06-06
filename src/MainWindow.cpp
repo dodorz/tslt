@@ -14,7 +14,7 @@
 
 namespace {
 constexpr wchar_t kWindowTitle[] = L"LLM Translator";
-constexpr int kMinWindowWidth = 640;
+constexpr int kMinWindowWidth = 760;
 constexpr int kMinWindowHeight = 480;
 constexpr int kMargin = 16;
 constexpr int kTopRowHeight = 32;
@@ -22,7 +22,177 @@ constexpr int kBottomRowHeight = 24;
 constexpr int kButtonWidth = 112;
 constexpr int kComboWidth = 168;
 constexpr int kProviderComboWidth = 168;
+constexpr int kPromptButtonWidth = 96;
 constexpr DWORD kEscapeExitIntervalMs = 500;
+constexpr wchar_t kPromptDialogClassName[] = L"TsltPromptDialog";
+
+struct PromptDialogState {
+    HWND owner = nullptr;
+    HWND window = nullptr;
+    HWND edit = nullptr;
+    HWND okButton = nullptr;
+    HWND cancelButton = nullptr;
+    HFONT font = nullptr;
+    WNDPROC editProc = nullptr;
+    std::wstring text;
+    bool accepted = false;
+};
+
+std::wstring ReadUnicodeTextFromClipboard(HWND owner) {
+    if (!OpenClipboard(owner)) {
+        return L"";
+    }
+
+    HANDLE data = GetClipboardData(CF_UNICODETEXT);
+    if (data == nullptr) {
+        CloseClipboard();
+        return L"";
+    }
+
+    const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(data));
+    if (text == nullptr) {
+        CloseClipboard();
+        return L"";
+    }
+
+    std::wstring result(text);
+    GlobalUnlock(data);
+    CloseClipboard();
+    return result;
+}
+
+LRESULT CALLBACK PromptEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<PromptDialogState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (state == nullptr || state->editProc == nullptr) {
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    if (msg == WM_PASTE) {
+        const std::wstring clipboardText = ReadUnicodeTextFromClipboard(hwnd);
+        if (!clipboardText.empty()) {
+            const std::wstring normalized = NormalizeEditControlLineEndings(clipboardText);
+            SendMessageW(hwnd, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(normalized.c_str()));
+            return 0;
+        }
+    }
+
+    return CallWindowProcW(state->editProc, hwnd, msg, wParam, lParam);
+}
+
+LRESULT CALLBACK PromptDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* state = reinterpret_cast<PromptDialogState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+
+    switch (msg) {
+    case WM_NCCREATE: {
+        auto* createStruct = reinterpret_cast<CREATESTRUCTW*>(lParam);
+        state = reinterpret_cast<PromptDialogState*>(createStruct->lpCreateParams);
+        state->window = hwnd;
+        SetWindowLongPtrW(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+        return TRUE;
+    }
+    case WM_CREATE: {
+        state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", state->text.c_str(),
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
+            16, 16, 536, 232, hwnd, nullptr, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+        state->okButton = CreateWindowExW(0, L"BUTTON", L"OK",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
+            360, 264, 92, 32, hwnd, reinterpret_cast<HMENU>(IDOK), reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+        state->cancelButton = CreateWindowExW(0, L"BUTTON", L"Cancel",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+            460, 264, 92, 32, hwnd, reinterpret_cast<HMENU>(IDCANCEL), reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+
+        state->editProc = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(state->edit, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(PromptEditProc)));
+        SetWindowLongPtrW(state->edit, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
+
+        if (state->font != nullptr) {
+            const HWND controls[] = {state->edit, state->okButton, state->cancelButton};
+            for (HWND control : controls) {
+                SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(state->font), TRUE);
+            }
+        }
+
+        SetFocus(state->edit);
+        return 0;
+    }
+    case WM_COMMAND:
+        switch (LOWORD(wParam)) {
+        case IDOK: {
+            const int length = GetWindowTextLengthW(state->edit);
+            std::wstring text(static_cast<size_t>(length) + 1, L'\0');
+            GetWindowTextW(state->edit, text.data(), length + 1);
+            text.resize(static_cast<size_t>(length));
+            state->text = text;
+            state->accepted = true;
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        case IDCANCEL:
+            DestroyWindow(hwnd);
+            return 0;
+        default:
+            break;
+        }
+        break;
+    case WM_CLOSE:
+        DestroyWindow(hwnd);
+        return 0;
+    default:
+        break;
+    }
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+bool ShowSystemPromptDialog(HINSTANCE instance, HWND owner, HFONT font, std::wstring& promptText) {
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof(wc);
+    wc.lpfnWndProc = PromptDialogProc;
+    wc.hInstance = instance;
+    wc.lpszClassName = kPromptDialogClassName;
+    wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    RegisterClassExW(&wc);
+
+    PromptDialogState state{};
+    state.owner = owner;
+    state.font = font;
+    state.text = promptText;
+
+    RECT ownerRect{};
+    GetWindowRect(owner, &ownerRect);
+    const int dialogWidth = 568;
+    const int dialogHeight = 344;
+    const int x = ownerRect.left + (((ownerRect.right - ownerRect.left) - dialogWidth) / 2);
+    const int y = ownerRect.top + (((ownerRect.bottom - ownerRect.top) - dialogHeight) / 2);
+
+    EnableWindow(owner, FALSE);
+    HWND dialog = CreateWindowExW(WS_EX_DLGMODALFRAME, kPromptDialogClassName, L"Temporary System Prompt",
+        WS_CAPTION | WS_SYSMENU | WS_POPUP | WS_VISIBLE,
+        x, y, dialogWidth, dialogHeight, owner, nullptr, instance, &state);
+
+    if (dialog == nullptr) {
+        EnableWindow(owner, TRUE);
+        return false;
+    }
+
+    MSG msg{};
+    while (IsWindow(dialog) && GetMessageW(&msg, nullptr, 0, 0) > 0) {
+        if (!IsDialogMessageW(dialog, &msg)) {
+            TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+
+    EnableWindow(owner, TRUE);
+    SetActiveWindow(owner);
+    SetForegroundWindow(owner);
+
+    if (state.accepted) {
+        promptText = state.text;
+        return true;
+    }
+    return false;
+}
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
@@ -237,6 +407,10 @@ bool MainWindow::OnCreate() {
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_PROVIDER), instance_, nullptr);
 
+    systemPromptButton_ = CreateWindowExW(0, L"BUTTON", L"Prompt",
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_SYSTEM_PROMPT), instance_, nullptr);
+
     translateButton_ = CreateWindowExW(0, L"BUTTON", L"Translate",
         WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSLATE), instance_, nullptr);
@@ -253,7 +427,8 @@ bool MainWindow::OnCreate() {
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
 
-    if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || providerCombo_ == nullptr || translateButton_ == nullptr ||
+    if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || providerCombo_ == nullptr || systemPromptButton_ == nullptr ||
+        translateButton_ == nullptr ||
         outputEdit_ == nullptr || copyButton_ == nullptr || statusStatic_ == nullptr) {
         return false;
     }
@@ -289,7 +464,7 @@ bool MainWindow::OnCreate() {
     }
 
     ApplyWindowState();
-    SetTranslating(false, config_.loadedPath.empty() ? L"Ready. config.ini not found." : L"Ready");
+    SetTranslating(false, config_.loadedPath.empty() ? L"Ready. tslt.ini not found." : L"Ready");
     return true;
 }
 
@@ -326,12 +501,20 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
             OnProviderChanged();
         }
         break;
+    case IDC_SYSTEM_PROMPT:
+        if (notifyCode == BN_CLICKED) {
+            OnSystemPromptClicked();
+        }
+        break;
     default:
         break;
     }
 }
 
 void MainWindow::OnClose() {
+    if (isTranslating_) {
+        AbortActiveTranslation();
+    }
     UpdateWindowState();
     ConfigStore(appName_).SaveWindowState(windowState_);
     DestroyWindow(hwnd_);
@@ -348,6 +531,8 @@ void MainWindow::OnDestroy() {
 void MainWindow::OnTranslateClicked() {
     lastEscapeTick_ = 0;
     if (isTranslating_) {
+        AbortActiveTranslation();
+        SetTranslating(true, L"Aborting...");
         return;
     }
 
@@ -377,6 +562,7 @@ void MainWindow::OnTranslateClicked() {
     request.baseUrl = provider->baseUrl;
     request.apiKey = provider->apiKey;
     request.model = provider->model;
+    request.systemPrompt = systemPromptOverride_;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;
     request.temperature = config_.translate.temperature;
@@ -416,6 +602,24 @@ void MainWindow::OnProviderChanged() {
     config_.llm.provider = config_.llm.providers[static_cast<size_t>(index)].sectionName;
 }
 
+void MainWindow::OnSystemPromptClicked() {
+    std::wstring promptText = systemPromptOverride_;
+    if (promptText.empty()) {
+        promptText = L"You are a translation engine. Return only the translated text.";
+    }
+
+    if (!ShowSystemPromptDialog(instance_, hwnd_, uiFont_, promptText)) {
+        return;
+    }
+
+    systemPromptOverride_ = TrimCopy(promptText);
+    if (systemPromptOverride_.empty()) {
+        SetTranslating(isTranslating_, L"Using default system prompt.");
+    } else {
+        SetTranslating(isTranslating_, L"Temporary system prompt applied.");
+    }
+}
+
 void MainWindow::OnTranslateDone(TranslateResult* result) {
     if (result != nullptr) {
         hasCopyableOutput_ = !TrimCopy(result->translatedText).empty();
@@ -430,6 +634,12 @@ void MainWindow::OnTranslateDone(TranslateResult* result) {
 void MainWindow::OnTranslateError(TranslateError* error) {
     if (error != nullptr) {
         hasCopyableOutput_ = false;
+        if (error->message == L"Translation aborted.") {
+            SetOutputText(L"");
+            SetTranslating(false, L"Translation aborted.");
+            delete error;
+            return;
+        }
         SetOutputText(error->message);
         SetTranslating(false, error->message);
         delete error;
@@ -444,15 +654,19 @@ void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
     const int statusY = clientHeight - kMargin - kBottomRowHeight;
     const int contentY = topY + kTopRowHeight + kMargin;
     const int contentHeight = statusY - contentY - kMargin;
-    const int topButtonsWidth = kComboWidth + kMargin + kProviderComboWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
+    const int topButtonsWidth = kComboWidth + kMargin + kProviderComboWidth + kMargin + kPromptButtonWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
     const int outputHeight = contentHeight / 2;
     const int inputHeight = contentHeight - outputHeight - kMargin;
 
     const int providerX = kMargin + kComboWidth + kMargin;
+    const int promptButtonX = providerX + kProviderComboWidth + kMargin;
+    const int translateX = promptButtonX + kPromptButtonWidth + kMargin;
+    const int copyX = translateX + kButtonWidth + kMargin;
     MoveWindow(targetLangCombo_, kMargin, topY, kComboWidth, 400, TRUE);
     MoveWindow(providerCombo_, providerX, topY, kProviderComboWidth, 400, TRUE);
-    MoveWindow(translateButton_, clientWidth - kMargin - (kButtonWidth * 2) - kMargin, topY, kButtonWidth, kTopRowHeight, TRUE);
-    MoveWindow(copyButton_, clientWidth - kMargin - kButtonWidth, topY, kButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(systemPromptButton_, promptButtonX, topY, kPromptButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(translateButton_, translateX, topY, kButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(copyButton_, copyX, topY, kButtonWidth, kTopRowHeight, TRUE);
     MoveWindow(inputEdit_, kMargin, contentY, clientWidth - (kMargin * 2), inputHeight, TRUE);
     MoveWindow(outputEdit_, kMargin, contentY + inputHeight + kMargin, clientWidth - (kMargin * 2), outputHeight, TRUE);
     MoveWindow(statusStatic_, kMargin, statusY, clientWidth - (kMargin * 2), kBottomRowHeight, TRUE);
@@ -461,9 +675,11 @@ void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
 
 void MainWindow::SetTranslating(bool translating, const std::wstring& statusText) {
     isTranslating_ = translating;
-    EnableWindow(translateButton_, translating ? FALSE : TRUE);
+    SetWindowTextW(translateButton_, translating ? L"Abort" : L"Translate");
+    EnableWindow(translateButton_, TRUE);
     EnableWindow(targetLangCombo_, translating ? FALSE : TRUE);
     EnableWindow(providerCombo_, translating ? FALSE : TRUE);
+    EnableWindow(systemPromptButton_, translating ? FALSE : TRUE);
     UpdateCopyButtonState();
     if (!statusText.empty()) {
         SetWindowTextW(statusStatic_, statusText.c_str());
@@ -661,7 +877,7 @@ void MainWindow::ApplyUiFont() {
         return;
     }
 
-    const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, translateButton_, outputEdit_, copyButton_, statusStatic_};
+    const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, systemPromptButton_, translateButton_, outputEdit_, copyButton_, statusStatic_};
     for (HWND control : controls) {
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
     }

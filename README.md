@@ -1,12 +1,12 @@
 # tslt
 
-`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads OpenAI-compatible provider settings from `config.ini`, keeps window state in `%AppData%`, and runs translation requests on a worker thread so the UI stays responsive.
+`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads OpenAI-compatible provider settings from `tslt.ini`, keeps window state in `%AppData%`, and runs translation requests on a worker thread so the UI stays responsive.
 
 ## Current scope
 
 - Native Win32 desktop UI
 - OpenAI-compatible chat-completions backends
-- Configurable provider selection from `config.ini`
+- Configurable provider selection from `tslt.ini`
 - Target language selection
 - Copy translated output to clipboard
 - Separate runtime state file at `%AppData%/tslt/state.dat`
@@ -29,7 +29,7 @@ Output:
 
 ## Configuration
 
-Copy `config.ini.example` to `config.ini` next to the executable, or place it under `%AppData%/tslt/config.ini`.
+Copy `tslt.ini.example` to `tslt.ini` next to the executable, or place it under `%AppData%/tslt/tslt.ini`.
 
 Example:
 
@@ -59,7 +59,7 @@ Rules:
 - The active provider is selected by `[LLM].provider`.
 - Every provider is loaded from an `LLM.<name>` section.
 - `name` is optional and only affects the UI label.
-- Runtime window state is never written into `config.ini`.
+- Runtime window state is never written into `tslt.ini`.
 
 ## Release
 

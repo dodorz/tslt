@@ -7,7 +7,7 @@
 #include "StringUtils.h"
 
 namespace {
-constexpr wchar_t kConfigFileName[] = L"config.ini";
+constexpr wchar_t kConfigFileName[] = L"tslt.ini";
 constexpr wchar_t kStateFileName[] = L"state.dat";
 
 std::wstring ResolveProviderName(const std::wstring& configuredProvider, const std::vector<LlmProviderConfig>& providers) {
