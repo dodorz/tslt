@@ -17,9 +17,12 @@ constexpr wchar_t kWindowTitle[] = L"LLM Translator";
 constexpr int kMinWindowWidth = 760;
 constexpr int kMinWindowHeight = 480;
 constexpr int kMargin = 16;
-constexpr int kTopRowHeight = 32;
+constexpr int kTopRowHeight = 36;
+constexpr int kToolbarPanelPadding = 14;
+constexpr int kCardPadding = 10;
 constexpr int kBottomRowHeight = 24;
 constexpr int kButtonWidth = 112;
+constexpr int kPrimaryButtonWidth = 124;
 constexpr int kComboWidth = 168;
 constexpr int kProviderComboWidth = 168;
 constexpr int kPromptButtonWidth = 96;
@@ -193,6 +196,15 @@ bool ShowSystemPromptDialog(HINSTANCE instance, HWND owner, HFONT font, std::wst
     }
     return false;
 }
+
+RECT MakeRect(int left, int top, int right, int bottom) {
+    RECT rect{};
+    rect.left = left;
+    rect.top = top;
+    rect.right = right;
+    rect.bottom = bottom;
+    return rect;
+}
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
@@ -347,6 +359,9 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
         return DefWindowProcW(hwnd_, msg, wParam, lParam);
     case WM_CREATE:
         return OnCreate() ? 0 : -1;
+    case WM_PAINT:
+        OnPaint();
+        return 0;
     case WM_SIZE:
         OnSize(static_cast<UINT>(wParam), LOWORD(lParam), HIWORD(lParam));
         return 0;
@@ -412,7 +427,7 @@ bool MainWindow::OnCreate() {
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_SYSTEM_PROMPT), instance_, nullptr);
 
     translateButton_ = CreateWindowExW(0, L"BUTTON", L"Translate",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
+        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_TRANSLATE), instance_, nullptr);
 
     outputEdit_ = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -471,8 +486,47 @@ bool MainWindow::OnCreate() {
 void MainWindow::OnSize(UINT sizeType, int width, int height) {
     if (sizeType != SIZE_MINIMIZED) {
         LayoutControls(width, height);
+        InvalidateRect(hwnd_, nullptr, TRUE);
         UpdateWindowState();
     }
+}
+
+void MainWindow::OnPaint() {
+    PAINTSTRUCT ps{};
+    HDC hdc = BeginPaint(hwnd_, &ps);
+    if (hdc == nullptr) {
+        return;
+    }
+
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+
+    const HBRUSH backgroundBrush = CreateSolidBrush(RGB(247, 247, 245));
+    FillRect(hdc, &client, backgroundBrush);
+
+    const HBRUSH cardBrush = CreateSolidBrush(RGB(251, 251, 250));
+    const HBRUSH cardBorderBrush = CreateSolidBrush(RGB(220, 218, 214));
+    RECT inputRect{};
+    RECT outputRect{};
+    if (inputEdit_ != nullptr) {
+        GetWindowRect(inputEdit_, &inputRect);
+        MapWindowPoints(HWND_DESKTOP, hwnd_, reinterpret_cast<LPPOINT>(&inputRect), 2);
+        InflateRect(&inputRect, kCardPadding, kCardPadding);
+        FillRect(hdc, &inputRect, cardBrush);
+        FrameRect(hdc, &inputRect, cardBorderBrush);
+    }
+    if (outputEdit_ != nullptr) {
+        GetWindowRect(outputEdit_, &outputRect);
+        MapWindowPoints(HWND_DESKTOP, hwnd_, reinterpret_cast<LPPOINT>(&outputRect), 2);
+        InflateRect(&outputRect, kCardPadding, kCardPadding);
+        FillRect(hdc, &outputRect, cardBrush);
+        FrameRect(hdc, &outputRect, cardBorderBrush);
+    }
+
+    DeleteObject(cardBorderBrush);
+    DeleteObject(cardBrush);
+    DeleteObject(backgroundBrush);
+    EndPaint(hwnd_, &ps);
 }
 
 void MainWindow::OnMove(int, int) {
@@ -521,6 +575,10 @@ void MainWindow::OnClose() {
 }
 
 void MainWindow::OnDestroy() {
+    if (emphasisFont_ != nullptr) {
+        DeleteObject(emphasisFont_);
+        emphasisFont_ = nullptr;
+    }
     if (uiFont_ != nullptr) {
         DeleteObject(uiFont_);
         uiFont_ = nullptr;
@@ -652,25 +710,29 @@ void MainWindow::OnTranslateError(TranslateError* error) {
 void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
     const int topY = kMargin;
     const int statusY = clientHeight - kMargin - kBottomRowHeight;
-    const int contentY = topY + kTopRowHeight + kMargin;
+    const int contentY = topY + kTopRowHeight + kToolbarPanelPadding + kCardPadding;
     const int contentHeight = statusY - contentY - kMargin;
-    const int topButtonsWidth = kComboWidth + kMargin + kProviderComboWidth + kMargin + kPromptButtonWidth + kMargin + kButtonWidth + kMargin + kButtonWidth;
-    const int outputHeight = contentHeight / 2;
-    const int inputHeight = contentHeight - outputHeight - kMargin;
+    const int outputHeight = (contentHeight - (kMargin + (kCardPadding * 4))) / 2;
+    const int inputHeight = contentHeight - outputHeight - (kMargin + (kCardPadding * 4));
 
-    const int providerX = kMargin + kComboWidth + kMargin;
-    const int promptButtonX = providerX + kProviderComboWidth + kMargin;
-    const int translateX = promptButtonX + kPromptButtonWidth + kMargin;
-    const int copyX = translateX + kButtonWidth + kMargin;
-    MoveWindow(targetLangCombo_, kMargin, topY, kComboWidth, 400, TRUE);
-    MoveWindow(providerCombo_, providerX, topY, kProviderComboWidth, 400, TRUE);
-    MoveWindow(systemPromptButton_, promptButtonX, topY, kPromptButtonWidth, kTopRowHeight, TRUE);
-    MoveWindow(translateButton_, translateX, topY, kButtonWidth, kTopRowHeight, TRUE);
-    MoveWindow(copyButton_, copyX, topY, kButtonWidth, kTopRowHeight, TRUE);
-    MoveWindow(inputEdit_, kMargin, contentY, clientWidth - (kMargin * 2), inputHeight, TRUE);
-    MoveWindow(outputEdit_, kMargin, contentY + inputHeight + kMargin, clientWidth - (kMargin * 2), outputHeight, TRUE);
+    const int comboVisibleHeight = 24;
+    const int comboTop = topY + ((kTopRowHeight - comboVisibleHeight) / 2);
+    const int buttonTop = topY;
+    const int primaryButtonTop = topY - 1;
+    const int promptButtonX = kMargin + kComboWidth + kMargin;
+    const int providerX = promptButtonX + kPromptButtonWidth + kMargin;
+    const int copyX = clientWidth - kMargin - kButtonWidth;
+    const int translateX = copyX - kMargin - kPrimaryButtonWidth;
+
+    MoveWindow(targetLangCombo_, kMargin, comboTop, kComboWidth, 400, TRUE);
+    MoveWindow(systemPromptButton_, promptButtonX, buttonTop, kPromptButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(providerCombo_, providerX, comboTop, kProviderComboWidth, 400, TRUE);
+    MoveWindow(translateButton_, translateX, primaryButtonTop, kPrimaryButtonWidth, kTopRowHeight + 2, TRUE);
+    MoveWindow(copyButton_, copyX, buttonTop, kButtonWidth, kTopRowHeight, TRUE);
+    MoveWindow(inputEdit_, kMargin + kCardPadding, contentY, clientWidth - ((kMargin + kCardPadding) * 2), inputHeight, TRUE);
+    MoveWindow(outputEdit_, kMargin + kCardPadding, contentY + inputHeight + kMargin + (kCardPadding * 2),
+        clientWidth - ((kMargin + kCardPadding) * 2), outputHeight, TRUE);
     MoveWindow(statusStatic_, kMargin, statusY, clientWidth - (kMargin * 2), kBottomRowHeight, TRUE);
-    (void)topButtonsWidth;
 }
 
 void MainWindow::SetTranslating(bool translating, const std::wstring& statusText) {
@@ -877,9 +939,17 @@ void MainWindow::ApplyUiFont() {
         return;
     }
 
+    LOGFONTW emphasisLogFont = metrics.lfMessageFont;
+    emphasisLogFont.lfWeight = FW_SEMIBOLD;
+    emphasisLogFont.lfHeight = static_cast<LONG>(emphasisLogFont.lfHeight * 11 / 10);
+    emphasisFont_ = CreateFontIndirectW(&emphasisLogFont);
+
     const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, systemPromptButton_, translateButton_, outputEdit_, copyButton_, statusStatic_};
     for (HWND control : controls) {
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
+    }
+    if (emphasisFont_ != nullptr) {
+        SendMessageW(translateButton_, WM_SETFONT, reinterpret_cast<WPARAM>(emphasisFont_), TRUE);
     }
 }
 

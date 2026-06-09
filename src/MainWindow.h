@@ -21,6 +21,7 @@ private:
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
     bool OnCreate();
+    void OnPaint();
     void OnSize(UINT sizeType, int width, int height);
     void OnMove(int x, int y);
     void OnCommand(int controlId, int notifyCode, HWND controlHwnd);
@@ -66,6 +67,7 @@ private:
     HWND copyButton_ = nullptr;
     HWND statusStatic_ = nullptr;
     HFONT uiFont_ = nullptr;
+    HFONT emphasisFont_ = nullptr;
     AppConfig config_;
     std::wstring statePath_;
     std::wstring initialInputText_;
