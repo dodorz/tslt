@@ -296,15 +296,6 @@ bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
         }
         SendMessageW(target, EM_SETSEL, 0, -1);
         return true;
-    case 'V':
-        if (!ctrlDown) {
-            break;
-        }
-        if (target == inputEdit_) {
-            return false;
-        }
-        OnCopyClicked();
-        return true;
     case 'W':
         if (!ctrlDown) {
             break;
@@ -434,17 +425,13 @@ bool MainWindow::OnCreate() {
         WS_CHILD | WS_VISIBLE | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL | ES_READONLY,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_OUTPUT), instance_, nullptr);
 
-    copyButton_ = CreateWindowExW(0, L"BUTTON", L"Copy",
-        WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_PUSHBUTTON,
-        0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_COPY), instance_, nullptr);
-
     statusStatic_ = CreateWindowExW(0, L"STATIC", L"Ready",
         WS_CHILD | WS_VISIBLE | SS_LEFT,
         0, 0, 0, 0, hwnd_, reinterpret_cast<HMENU>(IDC_STATUS), instance_, nullptr);
 
     if (inputEdit_ == nullptr || targetLangCombo_ == nullptr || providerCombo_ == nullptr || systemPromptButton_ == nullptr ||
         translateButton_ == nullptr ||
-        outputEdit_ == nullptr || copyButton_ == nullptr || statusStatic_ == nullptr) {
+        outputEdit_ == nullptr || statusStatic_ == nullptr) {
         return false;
     }
 
@@ -540,11 +527,6 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
             OnTranslateClicked();
         }
         break;
-    case IDC_COPY:
-        if (notifyCode == BN_CLICKED) {
-            OnCopyClicked();
-        }
-        break;
     case IDC_TARGET_LANG:
         if (notifyCode == CBN_SELCHANGE) {
             OnTargetLanguageChanged();
@@ -596,7 +578,6 @@ void MainWindow::OnTranslateClicked() {
 
     const std::wstring inputText = GetWindowTextCopy(inputEdit_);
     if (TrimCopy(inputText).empty()) {
-        hasCopyableOutput_ = false;
         SetOutputText(L"");
         SetTranslating(false, L"Input text is empty.");
         return;
@@ -609,7 +590,6 @@ void MainWindow::OnTranslateClicked() {
 
     const LlmProviderConfig* provider = FindProviderConfig(config_.llm.provider);
     if (provider == nullptr || TrimCopy(provider->baseUrl).empty() || TrimCopy(provider->apiKey).empty() || TrimCopy(provider->model).empty()) {
-        hasCopyableOutput_ = false;
         SetOutputText(L"LLM configuration is incomplete.");
         SetTranslating(false, L"LLM configuration is incomplete.");
         return;
@@ -626,19 +606,9 @@ void MainWindow::OnTranslateClicked() {
     request.temperature = config_.translate.temperature;
     request.inputText = inputText;
 
-    hasCopyableOutput_ = false;
     SetOutputText(L"");
     SetTranslating(true, L"Translating...");
     StartTranslateWorker(std::move(request));
-}
-
-void MainWindow::OnCopyClicked() {
-    const std::wstring text = GetWindowTextCopy(outputEdit_);
-    if (text.empty()) {
-        SetTranslating(isTranslating_, L"Nothing to copy.");
-        return;
-    }
-    SetTranslating(isTranslating_, CopyTextToClipboard(text) ? L"Copied." : L"Copy failed.");
 }
 
 void MainWindow::OnTargetLanguageChanged() {
@@ -680,18 +650,20 @@ void MainWindow::OnSystemPromptClicked() {
 
 void MainWindow::OnTranslateDone(TranslateResult* result) {
     if (result != nullptr) {
-        hasCopyableOutput_ = !TrimCopy(result->translatedText).empty();
-        SetOutputText(result->translatedText);
+        const std::wstring text = result->translatedText;
+        SetOutputText(text);
         delete result;
-    } else {
-        hasCopyableOutput_ = false;
+        if (!TrimCopy(text).empty()) {
+            CopyTextToClipboard(text);
+            SetTranslating(false, L"Done. Copied to clipboard.");
+            return;
+        }
     }
     SetTranslating(false, L"Done.");
 }
 
 void MainWindow::OnTranslateError(TranslateError* error) {
     if (error != nullptr) {
-        hasCopyableOutput_ = false;
         if (error->message == L"Translation aborted.") {
             SetOutputText(L"");
             SetTranslating(false, L"Translation aborted.");
@@ -703,7 +675,6 @@ void MainWindow::OnTranslateError(TranslateError* error) {
         delete error;
         return;
     }
-    hasCopyableOutput_ = false;
     SetTranslating(false, L"Translation failed.");
 }
 
@@ -721,14 +692,12 @@ void MainWindow::LayoutControls(int clientWidth, int clientHeight) {
     const int primaryButtonTop = topY - 1;
     const int promptButtonX = kMargin + kComboWidth + kMargin;
     const int providerX = promptButtonX + kPromptButtonWidth + kMargin;
-    const int copyX = clientWidth - kMargin - kButtonWidth;
-    const int translateX = copyX - kMargin - kPrimaryButtonWidth;
+    const int translateX = clientWidth - kMargin - kPrimaryButtonWidth;
 
     MoveWindow(targetLangCombo_, kMargin, comboTop, kComboWidth, 400, TRUE);
     MoveWindow(systemPromptButton_, promptButtonX, buttonTop, kPromptButtonWidth, kTopRowHeight, TRUE);
     MoveWindow(providerCombo_, providerX, comboTop, kProviderComboWidth, 400, TRUE);
     MoveWindow(translateButton_, translateX, primaryButtonTop, kPrimaryButtonWidth, kTopRowHeight + 2, TRUE);
-    MoveWindow(copyButton_, copyX, buttonTop, kButtonWidth, kTopRowHeight, TRUE);
     MoveWindow(inputEdit_, kMargin + kCardPadding, contentY, clientWidth - ((kMargin + kCardPadding) * 2), inputHeight, TRUE);
     MoveWindow(outputEdit_, kMargin + kCardPadding, contentY + inputHeight + kMargin + (kCardPadding * 2),
         clientWidth - ((kMargin + kCardPadding) * 2), outputHeight, TRUE);
@@ -742,14 +711,9 @@ void MainWindow::SetTranslating(bool translating, const std::wstring& statusText
     EnableWindow(targetLangCombo_, translating ? FALSE : TRUE);
     EnableWindow(providerCombo_, translating ? FALSE : TRUE);
     EnableWindow(systemPromptButton_, translating ? FALSE : TRUE);
-    UpdateCopyButtonState();
     if (!statusText.empty()) {
         SetWindowTextW(statusStatic_, statusText.c_str());
     }
-}
-
-void MainWindow::UpdateCopyButtonState() {
-    EnableWindow(copyButton_, (!isTranslating_ && hasCopyableOutput_) ? TRUE : FALSE);
 }
 
 void MainWindow::UpdateWindowState() {
@@ -922,7 +886,6 @@ void MainWindow::ApplyVisualStyle() {
     ApplyThemeToControl(targetLangCombo_, L"Explorer", nullptr);
     ApplyThemeToControl(providerCombo_, L"Explorer", nullptr);
     ApplyThemeToControl(translateButton_, L"Explorer", nullptr);
-    ApplyThemeToControl(copyButton_, L"Explorer", nullptr);
     ApplyThemeToControl(inputEdit_, L"Explorer", nullptr);
     ApplyThemeToControl(outputEdit_, L"Explorer", nullptr);
 }
@@ -944,7 +907,7 @@ void MainWindow::ApplyUiFont() {
     emphasisLogFont.lfHeight = static_cast<LONG>(emphasisLogFont.lfHeight * 11 / 10);
     emphasisFont_ = CreateFontIndirectW(&emphasisLogFont);
 
-    const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, systemPromptButton_, translateButton_, outputEdit_, copyButton_, statusStatic_};
+    const HWND controls[] = {inputEdit_, targetLangCombo_, providerCombo_, systemPromptButton_, translateButton_, outputEdit_, statusStatic_};
     for (HWND control : controls) {
         SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(uiFont_), TRUE);
     }

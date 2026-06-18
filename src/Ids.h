@@ -7,7 +7,6 @@
 #define IDC_SYSTEM_PROMPT    1008
 #define IDC_TRANSLATE        1004
 #define IDC_OUTPUT           1005
-#define IDC_COPY             1006
 #define IDC_STATUS           1007
 
 #endif

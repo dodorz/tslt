@@ -28,7 +28,6 @@ private:
     void OnClose();
     void OnDestroy();
     void OnTranslateClicked();
-    void OnCopyClicked();
     void OnTargetLanguageChanged();
     void OnProviderChanged();
     void OnSystemPromptClicked();
@@ -36,7 +35,6 @@ private:
     void OnTranslateError(struct TranslateError* error);
     void LayoutControls(int clientWidth, int clientHeight);
     void SetTranslating(bool translating, const std::wstring& statusText = L"");
-    void UpdateCopyButtonState();
     void UpdateWindowState();
     void ApplyWindowState();
     void CenterWindow();
@@ -64,7 +62,6 @@ private:
     HWND systemPromptButton_ = nullptr;
     HWND translateButton_ = nullptr;
     HWND outputEdit_ = nullptr;
-    HWND copyButton_ = nullptr;
     HWND statusStatic_ = nullptr;
     HFONT uiFont_ = nullptr;
     HFONT emphasisFont_ = nullptr;
@@ -73,7 +70,6 @@ private:
     std::wstring initialInputText_;
     WindowState windowState_{};
     bool isTranslating_ = false;
-    bool hasCopyableOutput_ = false;
     DWORD lastEscapeTick_ = 0;
     std::wstring systemPromptOverride_;
 };

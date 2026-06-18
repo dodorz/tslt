@@ -166,6 +166,14 @@ inline std::wstring ExtractJsonStringField(const std::string& json, const std::s
     return L"";
 }
 
+inline std::wstring TrimLeadingLineBreaks(const std::wstring& value) {
+    size_t start = 0;
+    while (start < value.size() && (value[start] == L'\r' || value[start] == L'\n')) {
+        ++start;
+    }
+    return value.substr(start);
+}
+
 inline bool FileExists(const std::wstring& path) {
     const DWORD attrs = GetFileAttributesW(path.c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_DIRECTORY) == 0;

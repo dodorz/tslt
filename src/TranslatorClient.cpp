@@ -448,7 +448,7 @@ void StartTranslateWorker(TranslateRequest request) {
                 return;
             }
 
-            auto* result = new TranslateResult{TranslateWithChunking(request)};
+            auto* result = new TranslateResult{TrimLeadingLineBreaks(TranslateWithChunking(request))};
             EndActiveTranslation();
             if (!PostMessageW(request.ownerHwnd, WM_APP_TRANSLATE_DONE, 0, reinterpret_cast<LPARAM>(result))) {
                 delete result;
