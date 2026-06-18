@@ -5,5 +5,7 @@
 
 constexpr UINT WM_APP_TRANSLATE_DONE = WM_APP + 1;
 constexpr UINT WM_APP_TRANSLATE_ERROR = WM_APP + 2;
+constexpr UINT WM_APP_DICT_LOOKUP_DONE = WM_APP + 3;
+constexpr UINT WM_APP_DICT_LOOKUP_ERROR = WM_APP + 4;
 
 #endif

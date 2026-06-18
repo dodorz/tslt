@@ -28,11 +28,14 @@ private:
     void OnClose();
     void OnDestroy();
     void OnTranslateClicked();
+    void OnInputChanged();
     void OnTargetLanguageChanged();
     void OnProviderChanged();
     void OnSystemPromptClicked();
     void OnTranslateDone(struct TranslateResult* result);
     void OnTranslateError(struct TranslateError* error);
+    void OnDictLookupDone(struct DictionaryLookupResult* result);
+    void OnDictLookupError(struct DictionaryLookupError* error);
     void LayoutControls(int clientWidth, int clientHeight);
     void SetTranslating(bool translating, const std::wstring& statusText = L"");
     void UpdateWindowState();

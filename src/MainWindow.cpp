@@ -11,6 +11,7 @@
 #include "Resource.h"
 #include "StringUtils.h"
 #include "TranslatorClient.h"
+#include "DictionaryClient.h"
 
 namespace {
 constexpr wchar_t kWindowTitle[] = L"LLM Translator";
@@ -380,6 +381,12 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_APP_TRANSLATE_ERROR:
         OnTranslateError(reinterpret_cast<TranslateError*>(lParam));
         return 0;
+    case WM_APP_DICT_LOOKUP_DONE:
+        OnDictLookupDone(reinterpret_cast<DictionaryLookupResult*>(lParam));
+        return 0;
+    case WM_APP_DICT_LOOKUP_ERROR:
+        OnDictLookupError(reinterpret_cast<DictionaryLookupError*>(lParam));
+        return 0;
     case WM_COPYDATA: {
         auto* cds = reinterpret_cast<COPYDATASTRUCT*>(lParam);
         if (cds != nullptr && cds->dwData == 1 && cds->lpData != nullptr && cds->cbData > 0) {
@@ -449,17 +456,29 @@ bool MainWindow::OnCreate() {
     SendMessageW(targetLangCombo_, CB_SETCURSEL, selectedIndex, 0);
 
     int selectedProviderIndex = 0;
+    int dictProviderIndex = -1;
+    int defaultLlmIndex = 0;
+
     for (int i = 0; i < static_cast<int>(config_.llm.providers.size()); ++i) {
         const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(i)];
         SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(provider.displayName.c_str()));
         if (provider.sectionName == config_.llm.provider) {
             selectedProviderIndex = i;
+            defaultLlmIndex = i;
         }
     }
+
+    SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"dict.cn"));
+    SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"youdao"));
+    dictProviderIndex = static_cast<int>(config_.llm.providers.size()) + 
+        (config_.dictionary.provider == DictionaryProvider::DictCn ? 0 : 1);
+
     if (!config_.llm.providers.empty()) {
         SendMessageW(providerCombo_, CB_SETCURSEL, selectedProviderIndex, 0);
-        OnProviderChanged();
     }
+
+    config_.dictionary._defaultLlmIndex = defaultLlmIndex;
+    config_.dictionary._dictStartIndex = static_cast<int>(config_.llm.providers.size());
 
     if (!initialInputText_.empty()) {
         SetWindowTextW(inputEdit_, initialInputText_.c_str());
@@ -527,6 +546,11 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
             OnTranslateClicked();
         }
         break;
+    case IDC_INPUT:
+        if (notifyCode == EN_CHANGE) {
+            OnInputChanged();
+        }
+        break;
     case IDC_TARGET_LANG:
         if (notifyCode == CBN_SELCHANGE) {
             OnTargetLanguageChanged();
@@ -588,6 +612,18 @@ void MainWindow::OnTranslateClicked() {
     SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
     config_.translate.targetLanguage = languageBuffer;
 
+    if (config_.dictionary.provider != DictionaryProvider::None) {
+        DictionaryLookupRequest request;
+        request.ownerHwnd = hwnd_;
+        request.provider = config_.dictionary.provider;
+        request.word = TrimCopy(inputText);
+
+        SetOutputText(L"");
+        SetTranslating(true, L"Looking up in dictionary...");
+        StartDictionaryLookupWorker(std::move(request));
+        return;
+    }
+
     const LlmProviderConfig* provider = FindProviderConfig(config_.llm.provider);
     if (provider == nullptr || TrimCopy(provider->baseUrl).empty() || TrimCopy(provider->apiKey).empty() || TrimCopy(provider->model).empty()) {
         SetOutputText(L"LLM configuration is incomplete.");
@@ -611,6 +647,32 @@ void MainWindow::OnTranslateClicked() {
     StartTranslateWorker(std::move(request));
 }
 
+void MainWindow::OnInputChanged() {
+    if (isTranslating_) {
+        return;
+    }
+
+    const std::wstring inputText = GetWindowTextCopy(inputEdit_);
+    size_t wordCount = CountWords(inputText);
+
+    if (wordCount <= config_.dictionary.autoSelectThreshold) {
+        int targetIndex = config_.dictionary._dictStartIndex;
+        if (config_.dictionary.provider == DictionaryProvider::Youdao) {
+            targetIndex += 1;
+        }
+        int currentIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
+        if (currentIndex != targetIndex) {
+            SendMessageW(providerCombo_, CB_SETCURSEL, targetIndex, 0);
+            OnProviderChanged();
+        }
+    } else {
+        if (config_.dictionary.provider != DictionaryProvider::None) {
+            SendMessageW(providerCombo_, CB_SETCURSEL, config_.dictionary._defaultLlmIndex, 0);
+            OnProviderChanged();
+        }
+    }
+}
+
 void MainWindow::OnTargetLanguageChanged() {
     const int index = static_cast<int>(SendMessageW(targetLangCombo_, CB_GETCURSEL, 0, 0));
     if (index == CB_ERR) {
@@ -623,11 +685,21 @@ void MainWindow::OnTargetLanguageChanged() {
 
 void MainWindow::OnProviderChanged() {
     const int index = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
-    if (index == CB_ERR || index < 0 || index >= static_cast<int>(config_.llm.providers.size())) {
+    if (index == CB_ERR) {
         return;
     }
 
-    config_.llm.provider = config_.llm.providers[static_cast<size_t>(index)].sectionName;
+    if (index >= config_.dictionary._dictStartIndex) {
+        config_.llm.provider = L"";
+        if (index == config_.dictionary._dictStartIndex) {
+            config_.dictionary.provider = DictionaryProvider::DictCn;
+        } else {
+            config_.dictionary.provider = DictionaryProvider::Youdao;
+        }
+    } else if (index < static_cast<int>(config_.llm.providers.size())) {
+        config_.llm.provider = config_.llm.providers[static_cast<size_t>(index)].sectionName;
+        config_.dictionary.provider = DictionaryProvider::None;
+    }
 }
 
 void MainWindow::OnSystemPromptClicked() {
@@ -676,6 +748,41 @@ void MainWindow::OnTranslateError(TranslateError* error) {
         return;
     }
     SetTranslating(false, L"Translation failed.");
+}
+
+void MainWindow::OnDictLookupDone(DictionaryLookupResult* result) {
+    if (result != nullptr) {
+        std::wstring output;
+        output += result->word;
+        if (!result->phonetic.empty()) {
+            output += L" " + result->phonetic;
+        }
+        output += L"\r\n\r\n";
+        if (!result->definition.empty()) {
+            output += result->definition;
+        }
+        if (!result->examples.empty()) {
+            output += L"\r\n\r\n" + result->examples;
+        }
+        SetOutputText(output);
+        delete result;
+        if (!TrimCopy(output).empty()) {
+            CopyTextToClipboard(output);
+            SetTranslating(false, L"Done. Copied to clipboard.");
+            return;
+        }
+    }
+    SetTranslating(false, L"Done.");
+}
+
+void MainWindow::OnDictLookupError(DictionaryLookupError* error) {
+    if (error != nullptr) {
+        SetOutputText(error->message);
+        SetTranslating(false, error->message);
+        delete error;
+        return;
+    }
+    SetTranslating(false, L"Dictionary lookup failed.");
 }
 
 void MainWindow::LayoutControls(int clientWidth, int clientHeight) {

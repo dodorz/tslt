@@ -49,7 +49,7 @@ jobs:
           $packageName = "tslt-$version-${{ matrix.package_suffix }}"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item "build/${{ matrix.package_suffix }}/Release/tslt.exe" "dist/tslt.exe"
-          Copy-Item "config.ini.example" "dist/config.ini.example"
+          Copy-Item "tslt.ini.example" "dist/tslt.ini.example"
           Compress-Archive -Path "dist/*" -DestinationPath "$packageName.zip" -Force
 
       - name: Upload packaged artifact

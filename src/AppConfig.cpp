@@ -72,6 +72,17 @@ AppConfig ConfigStore::Load() {
     config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
     config.translate.targetLanguage = ReadString(config.loadedPath, L"Translate", L"target_language", L"zh-CN");
     config.translate.temperature = ReadDouble(config.loadedPath, L"Translate", L"temperature", 0.2);
+
+    const std::wstring dictProvider = ReadString(config.loadedPath, L"Dictionary", L"provider", L"dict.cn");
+    if (dictProvider == L"dict.cn") {
+        config.dictionary.provider = DictionaryProvider::DictCn;
+    } else if (dictProvider == L"youdao") {
+        config.dictionary.provider = DictionaryProvider::Youdao;
+    } else {
+        config.dictionary.provider = DictionaryProvider::None;
+    }
+    config.dictionary.autoSelectThreshold = static_cast<size_t>(ReadInt(config.loadedPath, L"Dictionary", L"auto_select_threshold", 3));
+
     return config;
 }
 

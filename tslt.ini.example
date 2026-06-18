@@ -16,3 +16,7 @@ model = deepseek-v4-flash
 target_language = zh-CN
 source_language = auto
 temperature = 0.2
+
+[Dictionary]
+provider = dict.cn
+auto_select_threshold = 3

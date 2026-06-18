@@ -24,6 +24,19 @@ struct TranslateConfig {
     double temperature = 0.2;
 };
 
+enum class DictionaryProvider {
+    DictCn,
+    Youdao,
+    None
+};
+
+struct DictionaryConfig {
+    DictionaryProvider provider = DictionaryProvider::DictCn;
+    size_t autoSelectThreshold = 3;
+    int _defaultLlmIndex = 0;
+    int _dictStartIndex = 0;
+};
+
 struct WindowState {
     int x = CW_USEDEFAULT;
     int y = CW_USEDEFAULT;
@@ -36,6 +49,7 @@ struct AppConfig {
     std::wstring loadedPath;
     LlmConfig llm;
     TranslateConfig translate;
+    DictionaryConfig dictionary;
 };
 
 class ConfigStore {
