@@ -18,6 +18,7 @@ public:
 
 private:
     static LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
+    static LRESULT CALLBACK InputEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
     LRESULT HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam);
 
     bool OnCreate();
@@ -60,6 +61,7 @@ private:
     std::wstring appName_;
     HWND hwnd_ = nullptr;
     HWND inputEdit_ = nullptr;
+    WNDPROC inputEditProc_ = nullptr;
     HWND targetLangCombo_ = nullptr;
     HWND providerCombo_ = nullptr;
     HWND systemPromptButton_ = nullptr;

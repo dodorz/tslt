@@ -345,6 +345,24 @@ LRESULT CALLBACK MainWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM 
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
+LRESULT CALLBACK MainWindow::InputEditProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    auto* self = reinterpret_cast<MainWindow*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
+    if (self == nullptr || self->inputEditProc_ == nullptr) {
+        return DefWindowProcW(hwnd, msg, wParam, lParam);
+    }
+
+    if (msg == WM_PASTE) {
+        const std::wstring clipboardText = ReadUnicodeTextFromClipboard(hwnd);
+        if (!clipboardText.empty()) {
+            const std::wstring normalized = NormalizeEditControlLineEndings(clipboardText);
+            SendMessageW(hwnd, EM_REPLACESEL, TRUE, reinterpret_cast<LPARAM>(normalized.c_str()));
+            return 0;
+        }
+    }
+
+    return CallWindowProcW(self->inputEditProc_, hwnd, msg, wParam, lParam);
+}
+
 LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
     case WM_NCCREATE:
@@ -442,6 +460,10 @@ bool MainWindow::OnCreate() {
         return false;
     }
 
+    inputEditProc_ = reinterpret_cast<WNDPROC>(SetWindowLongPtrW(
+        inputEdit_, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&MainWindow::InputEditProc)));
+    SetWindowLongPtrW(inputEdit_, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
+
     ApplyVisualStyle();
     ApplyUiFont();
 
@@ -481,7 +503,7 @@ bool MainWindow::OnCreate() {
     config_.dictionary._dictStartIndex = static_cast<int>(config_.llm.providers.size());
 
     if (!initialInputText_.empty()) {
-        SetWindowTextW(inputEdit_, initialInputText_.c_str());
+        SetInputText(initialInputText_);
     }
 
     ApplyWindowState();
