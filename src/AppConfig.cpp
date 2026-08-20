@@ -1,5 +1,6 @@
 #include "AppConfig.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <shlobj.h>
 #include <vector>
@@ -81,7 +82,8 @@ AppConfig ConfigStore::Load() {
     } else {
         config.dictionary.provider = DictionaryProvider::None;
     }
-    config.dictionary.autoSelectThreshold = static_cast<size_t>(ReadInt(config.loadedPath, L"Dictionary", L"auto_select_threshold", 3));
+    config.dictionary.autoSelectMaxCharacters = static_cast<size_t>(
+        std::max(1, ReadInt(config.loadedPath, L"Dictionary", L"auto_select_max_characters", 20)));
 
     return config;
 }

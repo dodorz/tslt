@@ -7,7 +7,7 @@
 - Native Win32 desktop UI
 - OpenAI-compatible chat-completions backends
 - Configurable provider selection from `tslt.ini`
-- Target language selection
+- Target language selection, automatically set to English for predominantly Chinese input and Simplified Chinese for all other predominantly textual input
 - Copy translated output to clipboard
 - Separate runtime state file at `%AppData%/tslt/state.dat`
 - Optional piped stdin input preloaded into the input box
@@ -59,6 +59,7 @@ Rules:
 - The active provider is selected by `[LLM].provider`.
 - Every provider is loaded from an `LLM.<name>` section.
 - `name` is optional and only affects the UI label.
+- A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
 - Runtime window state is never written into `tslt.ini`.
 
 ## Release

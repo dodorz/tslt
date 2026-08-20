@@ -30,6 +30,7 @@ private:
     void OnDestroy();
     void OnTranslateClicked();
     void OnInputChanged();
+    void UpdateTargetLanguageForInput(const std::wstring& inputText);
     void OnTargetLanguageChanged();
     void OnProviderChanged();
     void OnSystemPromptClicked();

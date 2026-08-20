@@ -32,7 +32,7 @@ enum class DictionaryProvider {
 
 struct DictionaryConfig {
     DictionaryProvider provider = DictionaryProvider::DictCn;
-    size_t autoSelectThreshold = 3;
+    size_t autoSelectMaxCharacters = 20;
     int _defaultLlmIndex = 0;
     int _dictStartIndex = 0;
 };

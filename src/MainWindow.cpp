@@ -1,8 +1,10 @@
 #include "MainWindow.h"
 
 #include <cstring>
+#include <cwctype>
 #include <commctrl.h>
 #include <shellapi.h>
+#include <string_view>
 #include <uxtheme.h>
 #include <vector>
 
@@ -206,6 +208,47 @@ RECT MakeRect(int left, int top, int right, int bottom) {
     rect.bottom = bottom;
     return rect;
 }
+
+bool IsChineseCodePoint(unsigned int codePoint) {
+    return (codePoint >= 0x3400 && codePoint <= 0x4DBF) ||
+        (codePoint >= 0x4E00 && codePoint <= 0x9FFF) ||
+        (codePoint >= 0xF900 && codePoint <= 0xFAFF) ||
+        (codePoint >= 0x20000 && codePoint <= 0x2FA1F) ||
+        (codePoint >= 0x30000 && codePoint <= 0x323AF);
+}
+
+unsigned int NextCodePoint(std::wstring_view text, size_t& index) {
+    const unsigned int first = text[index++];
+    if (first >= 0xD800 && first <= 0xDBFF && index < text.size()) {
+        const unsigned int second = text[index];
+        if (second >= 0xDC00 && second <= 0xDFFF) {
+            ++index;
+            return 0x10000 + ((first - 0xD800) << 10) + (second - 0xDC00);
+        }
+    }
+    return first;
+}
+
+bool IsLanguageCharacter(unsigned int codePoint) {
+    if (codePoint > 0xFFFF) {
+        return false;
+    }
+
+    const wchar_t character = static_cast<wchar_t>(codePoint);
+    WORD characterType = 0;
+    return GetStringTypeW(CT_CTYPE1, &character, 1, &characterType) != FALSE && (characterType & C1_ALPHA) != 0;
+}
+
+size_t CountNonWhitespaceCodePoints(const std::wstring& text) {
+    size_t count = 0;
+    for (size_t index = 0; index < text.size();) {
+        const unsigned int codePoint = NextCodePoint(text, index);
+        if (codePoint > 0xFFFF || !iswspace(static_cast<wint_t>(codePoint))) {
+            ++count;
+        }
+    }
+    return count;
+}
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
@@ -378,6 +421,9 @@ LRESULT MainWindow::HandleMessage(UINT msg, WPARAM wParam, LPARAM lParam) {
     case WM_MOVE:
         OnMove(static_cast<int>(static_cast<short>(LOWORD(lParam))), static_cast<int>(static_cast<short>(HIWORD(lParam))));
         return 0;
+    case WM_LBUTTONDOWN:
+        SetFocus(inputEdit_);
+        return DefWindowProcW(hwnd_, msg, wParam, lParam);
     case WM_COMMAND:
         OnCommand(LOWORD(wParam), HIWORD(wParam), reinterpret_cast<HWND>(lParam));
         return 0;
@@ -508,6 +554,7 @@ bool MainWindow::OnCreate() {
 
     ApplyWindowState();
     SetTranslating(false, config_.loadedPath.empty() ? L"Ready. tslt.ini not found." : L"Ready");
+    SetFocus(inputEdit_);
     return true;
 }
 
@@ -576,11 +623,17 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
     case IDC_TARGET_LANG:
         if (notifyCode == CBN_SELCHANGE) {
             OnTargetLanguageChanged();
+            SetFocus(inputEdit_);
+        } else if (notifyCode == CBN_CLOSEUP) {
+            SetFocus(inputEdit_);
         }
         break;
     case IDC_PROVIDER:
         if (notifyCode == CBN_SELCHANGE) {
             OnProviderChanged();
+            SetFocus(inputEdit_);
+        } else if (notifyCode == CBN_CLOSEUP) {
+            SetFocus(inputEdit_);
         }
         break;
     case IDC_SYSTEM_PROMPT:
@@ -615,6 +668,7 @@ void MainWindow::OnDestroy() {
 }
 
 void MainWindow::OnTranslateClicked() {
+    SetFocus(outputEdit_);
     lastEscapeTick_ = 0;
     if (isTranslating_) {
         AbortActiveTranslation();
@@ -675,9 +729,13 @@ void MainWindow::OnInputChanged() {
     }
 
     const std::wstring inputText = GetWindowTextCopy(inputEdit_);
-    size_t wordCount = CountWords(inputText);
+    UpdateTargetLanguageForInput(inputText);
 
-    if (wordCount <= config_.dictionary.autoSelectThreshold) {
+    const size_t wordCount = CountWords(inputText);
+    const size_t characterCount = CountNonWhitespaceCodePoints(inputText);
+    const bool useDictionary = wordCount == 1 && characterCount <= config_.dictionary.autoSelectMaxCharacters;
+
+    if (useDictionary) {
         int targetIndex = config_.dictionary._dictStartIndex;
         if (config_.dictionary.provider == DictionaryProvider::Youdao) {
             targetIndex += 1;
@@ -693,6 +751,38 @@ void MainWindow::OnInputChanged() {
             OnProviderChanged();
         }
     }
+}
+
+void MainWindow::UpdateTargetLanguageForInput(const std::wstring& inputText) {
+    size_t chineseCharacterCount = 0;
+    size_t otherLanguageCharacterCount = 0;
+
+    for (size_t index = 0; index < inputText.size();) {
+        const unsigned int codePoint = NextCodePoint(inputText, index);
+        if (IsChineseCodePoint(codePoint)) {
+            ++chineseCharacterCount;
+        } else if (IsLanguageCharacter(codePoint)) {
+            ++otherLanguageCharacterCount;
+        }
+    }
+
+    if (chineseCharacterCount == 0 && otherLanguageCharacterCount == 0) {
+        return;
+    }
+
+    const wchar_t* targetLanguage = chineseCharacterCount > otherLanguageCharacterCount ? L"en" : L"zh-CN";
+    if (config_.translate.targetLanguage == targetLanguage) {
+        return;
+    }
+
+    const int targetIndex = static_cast<int>(SendMessageW(targetLangCombo_, CB_FINDSTRINGEXACT, -1,
+        reinterpret_cast<LPARAM>(targetLanguage)));
+    if (targetIndex == CB_ERR) {
+        return;
+    }
+
+    SendMessageW(targetLangCombo_, CB_SETCURSEL, targetIndex, 0);
+    config_.translate.targetLanguage = targetLanguage;
 }
 
 void MainWindow::OnTargetLanguageChanged() {
@@ -730,16 +820,17 @@ void MainWindow::OnSystemPromptClicked() {
         promptText = L"You are a translation engine. Return only the translated text.";
     }
 
-    if (!ShowSystemPromptDialog(instance_, hwnd_, uiFont_, promptText)) {
-        return;
+    const bool accepted = ShowSystemPromptDialog(instance_, hwnd_, uiFont_, promptText);
+    if (accepted) {
+        systemPromptOverride_ = TrimCopy(promptText);
+        if (systemPromptOverride_.empty()) {
+            SetTranslating(isTranslating_, L"Using default system prompt.");
+        } else {
+            SetTranslating(isTranslating_, L"Temporary system prompt applied.");
+        }
     }
 
-    systemPromptOverride_ = TrimCopy(promptText);
-    if (systemPromptOverride_.empty()) {
-        SetTranslating(isTranslating_, L"Using default system prompt.");
-    } else {
-        SetTranslating(isTranslating_, L"Temporary system prompt applied.");
-    }
+    SetFocus(inputEdit_);
 }
 
 void MainWindow::OnTranslateDone(TranslateResult* result) {
