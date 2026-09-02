@@ -107,6 +107,8 @@ temperature = 0.2
 
 - 文件扩展名为 `.dat`
 - 文件内容仍使用 INI 结构，便于使用系统 API 读写
+- 提示词历史保存在 `[Prompts]` 区段，`item0` 为最近使用的提示词，最多保留 20 条
+- 提示词中的反斜杠保存为 `\\`，换行保存为 `\\n`
 - 不在程序目录下保存 `state.dat`
 
 建议内容：
@@ -118,6 +120,11 @@ y = 90
 width = 960
 height = 720
 maximized = 0
+
+[Prompts]
+count = 2
+item0 = You are a translation engine. Return only the translated text.
+item1 = Translate the text accurately and preserve its formatting.
 ```
 
 边界：

@@ -10,6 +10,7 @@
 - Target language selection, automatically set to English for predominantly Chinese input and Simplified Chinese for all other predominantly textual input
 - Copy translated output to clipboard
 - Separate runtime state file at `%LOCALAPPDATA%/tslt/state.dat`
+- Prompt history is available from the Prompt dialog and stored in `state.dat`
 - Optional piped stdin input preloaded into the input box
 
 ## Build

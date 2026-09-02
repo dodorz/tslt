@@ -30,6 +30,7 @@ constexpr int kComboWidth = 168;
 constexpr int kProviderComboWidth = 168;
 constexpr int kPromptButtonWidth = 96;
 constexpr DWORD kEscapeExitIntervalMs = 500;
+constexpr int kPromptHistoryControlId = 2001;
 constexpr wchar_t kPromptDialogClassName[] = L"TsltPromptDialog";
 
 struct PromptDialogState {
@@ -42,6 +43,8 @@ struct PromptDialogState {
     WNDPROC editProc = nullptr;
     std::wstring text;
     bool accepted = false;
+    HWND promptCombo = nullptr;
+    std::vector<std::wstring> history;
 };
 
 std::wstring ReadUnicodeTextFromClipboard(HWND owner) {
@@ -99,7 +102,22 @@ LRESULT CALLBACK PromptDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     case WM_CREATE: {
         state->edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", state->text.c_str(),
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_LEFT | ES_MULTILINE | ES_AUTOVSCROLL | WS_VSCROLL,
-            16, 16, 536, 232, hwnd, nullptr, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+            16, 16, 536, 196, hwnd, nullptr, reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+        state->promptCombo = CreateWindowExW(0, L"COMBOBOX", L"",
+            WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST | WS_VSCROLL,
+            16, 220, 536, 240, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kPromptHistoryControlId)),
+            reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
+
+        for (const std::wstring& prompt : state->history) {
+            SendMessageW(state->promptCombo, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(prompt.c_str()));
+        }
+        for (int index = 0; index < static_cast<int>(state->history.size()); ++index) {
+            if (state->history[static_cast<size_t>(index)] == state->text) {
+                SendMessageW(state->promptCombo, CB_SETCURSEL, index, 0);
+                break;
+            }
+        }
+
         state->okButton = CreateWindowExW(0, L"BUTTON", L"OK",
             WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
             360, 264, 92, 32, hwnd, reinterpret_cast<HMENU>(IDOK), reinterpret_cast<HINSTANCE>(GetWindowLongPtrW(hwnd, GWLP_HINSTANCE)), nullptr);
@@ -111,7 +129,7 @@ LRESULT CALLBACK PromptDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
         SetWindowLongPtrW(state->edit, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(state));
 
         if (state->font != nullptr) {
-            const HWND controls[] = {state->edit, state->okButton, state->cancelButton};
+            const HWND controls[] = {state->promptCombo, state->edit, state->okButton, state->cancelButton};
             for (HWND control : controls) {
                 SendMessageW(control, WM_SETFONT, reinterpret_cast<WPARAM>(state->font), TRUE);
             }
@@ -122,6 +140,15 @@ LRESULT CALLBACK PromptDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     }
     case WM_COMMAND:
         switch (LOWORD(wParam)) {
+        case kPromptHistoryControlId:
+            if (HIWORD(wParam) == CBN_SELCHANGE) {
+                const int index = static_cast<int>(SendMessageW(state->promptCombo, CB_GETCURSEL, 0, 0));
+                if (index >= 0 && index < static_cast<int>(state->history.size())) {
+                    SetWindowTextW(state->edit, state->history[static_cast<size_t>(index)].c_str());
+                    SendMessageW(state->edit, EM_SETSEL, 0, -1);
+                }
+            }
+            return 0;
         case IDOK: {
             const int length = GetWindowTextLengthW(state->edit);
             std::wstring text(static_cast<size_t>(length) + 1, L'\0');
@@ -149,7 +176,8 @@ LRESULT CALLBACK PromptDialogProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPa
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-bool ShowSystemPromptDialog(HINSTANCE instance, HWND owner, HFONT font, std::wstring& promptText) {
+bool ShowSystemPromptDialog(HINSTANCE instance, HWND owner, HFONT font, std::wstring& promptText,
+    const std::vector<std::wstring>& promptHistory) {
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
     wc.lpfnWndProc = PromptDialogProc;
@@ -163,6 +191,7 @@ bool ShowSystemPromptDialog(HINSTANCE instance, HWND owner, HFONT font, std::wst
     state.owner = owner;
     state.font = font;
     state.text = promptText;
+    state.history = promptHistory;
 
     RECT ownerRect{};
     GetWindowRect(owner, &ownerRect);
@@ -820,12 +849,23 @@ void MainWindow::OnSystemPromptClicked() {
         promptText = L"You are a translation engine. Return only the translated text.";
     }
 
-    const bool accepted = ShowSystemPromptDialog(instance_, hwnd_, uiFont_, promptText);
+    ConfigStore configStore(appName_);
+    const std::vector<std::wstring> promptHistory = configStore.LoadPromptHistory();
+    const bool accepted = ShowSystemPromptDialog(instance_, hwnd_, uiFont_, promptText, promptHistory);
     if (accepted) {
         systemPromptOverride_ = TrimCopy(promptText);
         if (systemPromptOverride_.empty()) {
             SetTranslating(isTranslating_, L"Using default system prompt.");
         } else {
+            std::vector<std::wstring> updatedHistory;
+            updatedHistory.reserve(promptHistory.size() + 1);
+            updatedHistory.push_back(systemPromptOverride_);
+            for (const std::wstring& previousPrompt : promptHistory) {
+                if (previousPrompt != systemPromptOverride_) {
+                    updatedHistory.push_back(previousPrompt);
+                }
+            }
+            configStore.SavePromptHistory(updatedHistory);
             SetTranslating(isTranslating_, L"Temporary system prompt applied.");
         }
     }

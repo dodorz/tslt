@@ -10,6 +10,56 @@
 namespace {
 constexpr wchar_t kConfigFileName[] = L"tslt.ini";
 constexpr wchar_t kStateFileName[] = L"state.dat";
+constexpr int kMaxPromptHistory = 20;
+
+std::wstring EncodePrompt(const std::wstring& value) {
+    std::wstring encoded;
+    encoded.reserve(value.size());
+    for (size_t index = 0; index < value.size(); ++index) {
+        const wchar_t ch = value[index];
+        if (ch == L'\\') {
+            encoded += L"\\\\";
+        } else if (ch == L'\r') {
+            encoded += L"\\n";
+            if (index + 1 < value.size() && value[index + 1] == L'\n') {
+                ++index;
+            }
+        } else if (ch == L'\n') {
+            encoded += L"\\n";
+        } else {
+            encoded.push_back(ch);
+        }
+    }
+    return encoded;
+}
+
+std::wstring DecodePrompt(const std::wstring& value) {
+    std::wstring decoded;
+    decoded.reserve(value.size());
+    for (size_t index = 0; index < value.size(); ++index) {
+        if (value[index] == L'\\' && index + 1 < value.size()) {
+            if (value[index + 1] == L'\\') {
+                decoded.push_back(L'\\');
+                ++index;
+                continue;
+            }
+            if (value[index + 1] == L'n') {
+                decoded.push_back(L'\n');
+                ++index;
+                continue;
+            }
+        }
+        decoded.push_back(value[index]);
+    }
+    return decoded;
+}
+
+void AddUniquePrompt(std::vector<std::wstring>& prompts, const std::wstring& prompt) {
+    if (prompt.empty() || std::find(prompts.begin(), prompts.end(), prompt) != prompts.end()) {
+        return;
+    }
+    prompts.push_back(prompt);
+}
 
 std::wstring ResolveProviderName(const std::wstring& configuredProvider, const std::vector<LlmProviderConfig>& providers) {
     if (providers.empty()) {
@@ -90,6 +140,49 @@ AppConfig ConfigStore::Load() {
 
 std::wstring ConfigStore::GetStatePath() const {
     return GetLocalAppDataDirectory() + L"\\" + kStateFileName;
+}
+
+std::vector<std::wstring> ConfigStore::LoadPromptHistory() const {
+    const std::wstring path = GetStatePath();
+    const int count = std::clamp(ReadInt(path, L"Prompts", L"count", 0), 0, kMaxPromptHistory);
+
+    std::vector<std::wstring> prompts;
+    prompts.reserve(static_cast<size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        const std::wstring key = L"item" + std::to_wstring(index);
+        AddUniquePrompt(prompts, DecodePrompt(ReadString(path, L"Prompts", key, L"")));
+    }
+    return prompts;
+}
+
+bool ConfigStore::SavePromptHistory(const std::vector<std::wstring>& prompts) const {
+    const std::wstring path = GetStatePath();
+    EnsureParentDirectory(path);
+
+    std::vector<std::wstring> uniquePrompts;
+    uniquePrompts.reserve(std::min(prompts.size(), static_cast<size_t>(kMaxPromptHistory)));
+    for (const std::wstring& prompt : prompts) {
+        AddUniquePrompt(uniquePrompts, prompt);
+        if (uniquePrompts.size() >= static_cast<size_t>(kMaxPromptHistory)) {
+            break;
+        }
+    }
+
+    const int previousCount = std::clamp(ReadInt(path, L"Prompts", L"count", 0), 0, kMaxPromptHistory);
+    bool ok = true;
+    for (size_t index = 0; index < uniquePrompts.size(); ++index) {
+        const std::wstring key = L"item" + std::to_wstring(index);
+        const std::wstring value = EncodePrompt(uniquePrompts[index]);
+        ok = WritePrivateProfileStringW(L"Prompts", key.c_str(), value.c_str(), path.c_str()) != 0 && ok;
+    }
+    for (int index = static_cast<int>(uniquePrompts.size()); index < previousCount; ++index) {
+        const std::wstring key = L"item" + std::to_wstring(index);
+        ok = WritePrivateProfileStringW(L"Prompts", key.c_str(), nullptr, path.c_str()) != 0 && ok;
+    }
+
+    const std::wstring count = std::to_wstring(uniquePrompts.size());
+    ok = WritePrivateProfileStringW(L"Prompts", L"count", count.c_str(), path.c_str()) != 0 && ok;
+    return ok;
 }
 
 bool ConfigStore::SaveWindowState(const WindowState& state) const {

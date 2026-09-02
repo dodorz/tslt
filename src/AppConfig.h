@@ -58,6 +58,8 @@ public:
 
     AppConfig Load();
     std::wstring GetStatePath() const;
+    std::vector<std::wstring> LoadPromptHistory() const;
+    bool SavePromptHistory(const std::vector<std::wstring>& prompts) const;
     bool SaveWindowState(const WindowState& state) const;
     WindowState LoadWindowState() const;
 
