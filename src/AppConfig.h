@@ -63,6 +63,7 @@ public:
 
 private:
     std::wstring ResolveConfigPath() const;
+    std::wstring GetLocalAppDataDirectory() const;
     std::wstring GetAppDataDirectory() const;
     std::wstring GetExeDirectory() const;
     void EnsureParentDirectory(const std::wstring& filePath) const;

@@ -1,6 +1,6 @@
 # tslt
 
-`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads OpenAI-compatible provider settings from `tslt.ini`, keeps window state in `%AppData%`, and runs translation requests on a worker thread so the UI stays responsive.
+`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads OpenAI-compatible provider settings from `tslt.ini`, keeps window state in `%LOCALAPPDATA%`, and runs translation requests on a worker thread so the UI stays responsive.
 
 ## Current scope
 
@@ -9,7 +9,7 @@
 - Configurable provider selection from `tslt.ini`
 - Target language selection, automatically set to English for predominantly Chinese input and Simplified Chinese for all other predominantly textual input
 - Copy translated output to clipboard
-- Separate runtime state file at `%AppData%/tslt/state.dat`
+- Separate runtime state file at `%LOCALAPPDATA%/tslt/state.dat`
 - Optional piped stdin input preloaded into the input box
 
 ## Build

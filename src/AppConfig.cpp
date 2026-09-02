@@ -89,7 +89,7 @@ AppConfig ConfigStore::Load() {
 }
 
 std::wstring ConfigStore::GetStatePath() const {
-    return GetAppDataDirectory() + L"\\" + kStateFileName;
+    return GetLocalAppDataDirectory() + L"\\" + kStateFileName;
 }
 
 bool ConfigStore::SaveWindowState(const WindowState& state) const {
@@ -137,6 +137,16 @@ std::wstring ConfigStore::ResolveConfigPath() const {
     }
 
     return L"";
+}
+
+std::wstring ConfigStore::GetLocalAppDataDirectory() const {
+    PWSTR localPath = nullptr;
+    std::wstring result;
+    if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &localPath)) && localPath != nullptr) {
+        result = std::wstring(localPath) + L"\\" + appName_;
+        CoTaskMemFree(localPath);
+    }
+    return result;
 }
 
 std::wstring ConfigStore::GetAppDataDirectory() const {

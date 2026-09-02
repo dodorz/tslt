@@ -101,7 +101,7 @@ temperature = 0.2
 
 位置：
 
-- 仅存放于 `%AppData%/<appname>/state.dat`
+- 仅存放于 `%LOCALAPPDATA%/<appname>/state.dat`
 
 说明：
 
@@ -318,7 +318,7 @@ struct WindowState {
 ## 第一版交互时序
 
 1. 启动时加载 `tslt.ini`
-2. 启动时加载 `%AppData%/<appname>/state.dat`
+2. 启动时加载 `%LOCALAPPDATA%/<appname>/state.dat`
 3. 创建并显示主窗口
 4. 用户点击 Translate
 5. UI 线程组装 `TranslateRequest`
