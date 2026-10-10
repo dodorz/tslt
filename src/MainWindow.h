@@ -32,7 +32,6 @@ private:
     void OnInputChanged();
     void UpdateTargetLanguageForInput(const std::wstring& inputText);
     void OnTargetLanguageChanged();
-    void OnProviderChanged();
     void OnSystemPromptClicked();
     void OnTranslateDone(struct TranslateResult* result);
     void OnTranslateError(struct TranslateError* error);
@@ -54,7 +53,6 @@ private:
     bool HasSelectedText(HWND target) const;
     void ApplyVisualStyle();
     void ApplyUiFont();
-    const LlmProviderConfig* FindProviderConfig(const std::wstring& providerName) const;
     void ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList);
 
 private:

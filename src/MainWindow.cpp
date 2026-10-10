@@ -552,27 +552,22 @@ bool MainWindow::OnCreate() {
     }
     SendMessageW(targetLangCombo_, CB_SETCURSEL, selectedIndex, 0);
 
-    int selectedProviderIndex = 0;
-    int dictProviderIndex = -1;
     int defaultLlmIndex = 0;
 
     for (int i = 0; i < static_cast<int>(config_.llm.providers.size()); ++i) {
         const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(i)];
         SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(provider.displayName.c_str()));
         if (provider.sectionName == config_.llm.provider) {
-            selectedProviderIndex = i;
             defaultLlmIndex = i;
         }
     }
 
     SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"dict.cn"));
     SendMessageW(providerCombo_, CB_ADDSTRING, 0, reinterpret_cast<LPARAM>(L"youdao"));
-    dictProviderIndex = static_cast<int>(config_.llm.providers.size()) + 
-        (config_.dictionary.provider == DictionaryProvider::DictCn ? 0 : 1);
+    const int dictProviderIndex = static_cast<int>(config_.llm.providers.size()) +
+        (config_.dictionary.provider == DictionaryProvider::Youdao ? 1 : 0);
 
-    if (!config_.llm.providers.empty()) {
-        SendMessageW(providerCombo_, CB_SETCURSEL, selectedProviderIndex, 0);
-    }
+    SendMessageW(providerCombo_, CB_SETCURSEL, dictProviderIndex, 0);
 
     config_.dictionary._defaultLlmIndex = defaultLlmIndex;
     config_.dictionary._dictStartIndex = static_cast<int>(config_.llm.providers.size());
@@ -658,10 +653,7 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
         }
         break;
     case IDC_PROVIDER:
-        if (notifyCode == CBN_SELCHANGE) {
-            OnProviderChanged();
-            SetFocus(inputEdit_);
-        } else if (notifyCode == CBN_CLOSEUP) {
+        if (notifyCode == CBN_SELCHANGE || notifyCode == CBN_CLOSEUP) {
             SetFocus(inputEdit_);
         }
         break;
@@ -717,10 +709,13 @@ void MainWindow::OnTranslateClicked() {
     SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
     config_.translate.targetLanguage = languageBuffer;
 
-    if (config_.dictionary.provider != DictionaryProvider::None) {
+    const int providerIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
+    if (providerIndex >= config_.dictionary._dictStartIndex) {
         DictionaryLookupRequest request;
         request.ownerHwnd = hwnd_;
-        request.provider = config_.dictionary.provider;
+        request.provider = providerIndex == config_.dictionary._dictStartIndex
+            ? DictionaryProvider::DictCn
+            : DictionaryProvider::Youdao;
         request.word = TrimCopy(inputText);
 
         SetOutputText(L"");
@@ -729,8 +724,14 @@ void MainWindow::OnTranslateClicked() {
         return;
     }
 
-    const LlmProviderConfig* provider = FindProviderConfig(config_.llm.provider);
-    if (provider == nullptr || TrimCopy(provider->baseUrl).empty() || TrimCopy(provider->apiKey).empty() || TrimCopy(provider->model).empty()) {
+    if (providerIndex < 0 || providerIndex >= static_cast<int>(config_.llm.providers.size())) {
+        SetOutputText(L"LLM configuration is incomplete.");
+        SetTranslating(false, L"LLM configuration is incomplete.");
+        return;
+    }
+
+    const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(providerIndex)];
+    if (TrimCopy(provider.baseUrl).empty() || TrimCopy(provider.apiKey).empty() || TrimCopy(provider.model).empty()) {
         SetOutputText(L"LLM configuration is incomplete.");
         SetTranslating(false, L"LLM configuration is incomplete.");
         return;
@@ -738,9 +739,9 @@ void MainWindow::OnTranslateClicked() {
 
     TranslateRequest request;
     request.ownerHwnd = hwnd_;
-    request.baseUrl = provider->baseUrl;
-    request.apiKey = provider->apiKey;
-    request.model = provider->model;
+    request.baseUrl = provider.baseUrl;
+    request.apiKey = provider.apiKey;
+    request.model = provider.model;
     request.systemPrompt = systemPromptOverride_;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;
@@ -753,10 +754,6 @@ void MainWindow::OnTranslateClicked() {
 }
 
 void MainWindow::OnInputChanged() {
-    if (isTranslating_) {
-        return;
-    }
-
     const std::wstring inputText = GetWindowTextCopy(inputEdit_);
     UpdateTargetLanguageForInput(inputText);
 
@@ -764,21 +761,21 @@ void MainWindow::OnInputChanged() {
     const size_t characterCount = CountNonWhitespaceCodePoints(inputText);
     const bool useDictionary = wordCount == 1 && characterCount <= config_.dictionary.autoSelectMaxCharacters;
 
+    const int currentIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
+    int targetIndex;
     if (useDictionary) {
-        int targetIndex = config_.dictionary._dictStartIndex;
-        if (config_.dictionary.provider == DictionaryProvider::Youdao) {
-            targetIndex += 1;
-        }
-        int currentIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
-        if (currentIndex != targetIndex) {
-            SendMessageW(providerCombo_, CB_SETCURSEL, targetIndex, 0);
-            OnProviderChanged();
-        }
+        targetIndex = currentIndex == config_.dictionary._dictStartIndex + 1
+            ? currentIndex
+            : config_.dictionary._dictStartIndex;
     } else {
-        if (config_.dictionary.provider != DictionaryProvider::None) {
-            SendMessageW(providerCombo_, CB_SETCURSEL, config_.dictionary._defaultLlmIndex, 0);
-            OnProviderChanged();
+        if (config_.llm.providers.empty()) {
+            return;
         }
+        targetIndex = config_.dictionary._defaultLlmIndex;
+    }
+
+    if (currentIndex != targetIndex) {
+        SendMessageW(providerCombo_, CB_SETCURSEL, targetIndex, 0);
     }
 }
 
@@ -822,25 +819,6 @@ void MainWindow::OnTargetLanguageChanged() {
     wchar_t languageBuffer[64] = {};
     SendMessageW(targetLangCombo_, CB_GETLBTEXT, index, reinterpret_cast<LPARAM>(languageBuffer));
     config_.translate.targetLanguage = languageBuffer;
-}
-
-void MainWindow::OnProviderChanged() {
-    const int index = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
-    if (index == CB_ERR) {
-        return;
-    }
-
-    if (index >= config_.dictionary._dictStartIndex) {
-        config_.llm.provider = L"";
-        if (index == config_.dictionary._dictStartIndex) {
-            config_.dictionary.provider = DictionaryProvider::DictCn;
-        } else {
-            config_.dictionary.provider = DictionaryProvider::Youdao;
-        }
-    } else if (index < static_cast<int>(config_.llm.providers.size())) {
-        config_.llm.provider = config_.llm.providers[static_cast<size_t>(index)].sectionName;
-        config_.dictionary.provider = DictionaryProvider::None;
-    }
 }
 
 void MainWindow::OnSystemPromptClicked() {
@@ -1174,15 +1152,6 @@ void MainWindow::ApplyUiFont() {
     if (emphasisFont_ != nullptr) {
         SendMessageW(translateButton_, WM_SETFONT, reinterpret_cast<WPARAM>(emphasisFont_), TRUE);
     }
-}
-
-const LlmProviderConfig* MainWindow::FindProviderConfig(const std::wstring& providerName) const {
-    for (const LlmProviderConfig& provider : config_.llm.providers) {
-        if (provider.sectionName == providerName) {
-            return &provider;
-        }
-    }
-    return nullptr;
 }
 
 void MainWindow::ApplyThemeToControl(HWND control, const wchar_t* subAppName, const wchar_t* subIdList) {
