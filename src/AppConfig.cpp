@@ -113,6 +113,8 @@ AppConfig ConfigStore::Load() {
         provider.baseUrl = ReadString(config.loadedPath, sectionName, L"base_url", L"");
         provider.apiKey = ReadString(config.loadedPath, sectionName, L"api_key", L"");
         provider.model = ReadString(config.loadedPath, sectionName, L"model", L"");
+        provider.protocol = ParseLlmProtocol(ReadString(config.loadedPath, sectionName, L"protocol", L""));
+        provider.maxTokens = std::max(1, ReadInt(config.loadedPath, sectionName, L"max_tokens", 8192));
         config.llm.providers.push_back(std::move(provider));
     }
 

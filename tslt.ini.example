@@ -12,6 +12,14 @@ base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
 
+[LLM.Claude]
+name = Anthropic Claude
+protocol = anthropic
+base_url = https://api.anthropic.com
+api_key = sk-ant-xxxxxx
+model = claude-sonnet-4-5
+max_tokens = 8192
+
 [Translate]
 target_language = zh-CN
 source_language = auto

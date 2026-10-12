@@ -1,11 +1,12 @@
 # tslt
 
-`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads OpenAI-compatible provider settings from `tslt.ini`, keeps window state in `%LOCALAPPDATA%`, and runs translation requests on a worker thread so the UI stays responsive.
+`tslt` is a minimal native Windows text translation tool built with Win32 API, CMake, and WinHTTP. It reads LLM provider settings from `tslt.ini`, keeps window state in `%LOCALAPPDATA%`, and runs translation requests on a worker thread so the UI stays responsive.
 
 ## Current scope
 
 - Native Win32 desktop UI
-- OpenAI-compatible chat-completions backends
+- OpenAI-compatible chat-completions backends (default)
+- Anthropic Messages backends via `protocol = anthropic`
 - Configurable provider selection from `tslt.ini`
 - Target language selection, automatically set to English for predominantly Chinese input and Simplified Chinese for all other predominantly textual input
 - Copy translated output to clipboard
@@ -49,6 +50,14 @@ base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
 
+[LLM.Claude]
+name = Anthropic Claude
+protocol = anthropic
+base_url = https://api.anthropic.com
+api_key = sk-ant-xxxxxx
+model = claude-sonnet-4-5
+max_tokens = 8192
+
 [Translate]
 target_language = zh-CN
 source_language = auto
@@ -60,6 +69,9 @@ Rules:
 - The active provider is selected by `[LLM].provider`.
 - Every provider is loaded from an `LLM.<name>` section.
 - `name` is optional and only affects the UI label.
+- `protocol` selects the request format: `openai` (default when omitted) sends `POST <base_url>/chat/completions` with `Authorization: Bearer`, `anthropic` sends `POST <base_url>/v1/messages` with `x-api-key` and `anthropic-version`.
+- For `protocol = anthropic`, `base_url` may or may not end with `/v1`; both `https://api.anthropic.com` and `https://api.anthropic.com/v1` work.
+- `max_tokens` is required by the Anthropic API and defaults to `8192` when omitted; it is ignored by the OpenAI protocol.
 - A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
 - Runtime window state is never written into `tslt.ini`.
 

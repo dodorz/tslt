@@ -742,6 +742,8 @@ void MainWindow::OnTranslateClicked() {
     request.baseUrl = provider.baseUrl;
     request.apiKey = provider.apiKey;
     request.model = provider.model;
+    request.protocol = provider.protocol;
+    request.maxTokens = provider.maxTokens;
     request.systemPrompt = systemPromptOverride_;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;

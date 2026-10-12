@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <mutex>
 #include <stdexcept>
+#include <string_view>
 #include <thread>
 #include <vector>
 #include <winhttp.h>
@@ -266,16 +267,24 @@ std::string BuildRequestBody(const TranslateRequest& request) {
 
     std::string body = "{";
     body += "\"model\":\"" + JsonEscapeUtf8(request.model) + "\",";
-    body += "\"messages\":[";
-    body += "{\"role\":\"system\",\"content\":\"" + JsonEscapeUtf8(systemPrompt) + "\"},";
-    body += "{\"role\":\"user\",\"content\":\"" + JsonEscapeUtf8(userPrompt) + "\"}";
-    body += "],";
+    if (request.protocol == LlmProtocol::Anthropic) {
+        body += "\"max_tokens\":" + std::to_string(std::max(1, request.maxTokens)) + ",";
+        body += "\"system\":\"" + JsonEscapeUtf8(systemPrompt) + "\",";
+        body += "\"messages\":[";
+        body += "{\"role\":\"user\",\"content\":\"" + JsonEscapeUtf8(userPrompt) + "\"}";
+        body += "],";
+    } else {
+        body += "\"messages\":[";
+        body += "{\"role\":\"system\",\"content\":\"" + JsonEscapeUtf8(systemPrompt) + "\"},";
+        body += "{\"role\":\"user\",\"content\":\"" + JsonEscapeUtf8(userPrompt) + "\"}";
+        body += "],";
+    }
     body += "\"temperature\":" + std::to_string(request.temperature);
     body += "}";
     return body;
 }
 
-bool ParseBaseUrl(const std::wstring& baseUrl, ParsedUrl& parsed) {
+bool ParseBaseUrl(const std::wstring& baseUrl, LlmProtocol protocol, ParsedUrl& parsed) {
     URL_COMPONENTSW components{};
     components.dwStructSize = sizeof(components);
 
@@ -305,13 +314,22 @@ bool ParseBaseUrl(const std::wstring& baseUrl, ParsedUrl& parsed) {
     if (!basePath.empty() && basePath.back() == L'/') {
         basePath.pop_back();
     }
-    parsed.path = basePath + L"/chat/completions";
+    if (protocol == LlmProtocol::Anthropic) {
+        constexpr std::wstring_view versionSuffix = L"/v1";
+        if (basePath.size() >= versionSuffix.size() && basePath.compare(basePath.size() - versionSuffix.size(), versionSuffix.size(), versionSuffix) == 0) {
+            parsed.path = basePath + L"/messages";
+        } else {
+            parsed.path = basePath + L"/v1/messages";
+        }
+    } else {
+        parsed.path = basePath + L"/chat/completions";
+    }
     return true;
 }
 
 std::wstring SendTranslationRequest(const TranslateRequest& request) {
     ParsedUrl parsed;
-    if (!ParseBaseUrl(request.baseUrl, parsed)) {
+    if (!ParseBaseUrl(request.baseUrl, request.protocol, parsed)) {
         throw std::runtime_error("Failed to parse base URL.");
     }
 
@@ -341,9 +359,13 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
     }
     RegisterActiveHandles(session, connection, requestHandle);
 
-    std::wstring headers = L"Content-Type: application/json\r\nAuthorization: Bearer ";
-    headers += request.apiKey;
-    headers += L"\r\n";
+    std::wstring headers = L"Content-Type: application/json\r\n";
+    if (request.protocol == LlmProtocol::Anthropic) {
+        headers += L"x-api-key: " + request.apiKey + L"\r\n";
+        headers += L"anthropic-version: 2023-06-01\r\n";
+    } else {
+        headers += L"Authorization: Bearer " + request.apiKey + L"\r\n";
+    }
 
     const BOOL sent = WinHttpSendRequest(requestHandle, headers.c_str(), static_cast<DWORD>(headers.size()),
         reinterpret_cast<LPVOID>(const_cast<char*>(body.data())), static_cast<DWORD>(body.size()),
@@ -391,7 +413,8 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
     CloseOwnedHandle(connection, &ActiveTranslationState::connection);
     CloseOwnedHandle(session, &ActiveTranslationState::session);
 
-    std::wstring content = ExtractJsonStringField(response, "content");
+    const char* contentKey = request.protocol == LlmProtocol::Anthropic ? "text" : "content";
+    std::wstring content = ExtractJsonStringField(response, contentKey);
     if (content.empty()) {
         std::wstring message = ExtractJsonStringField(response, "message");
         if (!message.empty()) {

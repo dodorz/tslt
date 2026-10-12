@@ -75,14 +75,23 @@ model = Qwen/Qwen3.5-4B
 base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
+
+[LLM.Claude]
+protocol = anthropic
+base_url = https://api.anthropic.com
+api_key = sk-ant-xxxxxx
+model = claude-sonnet-4-5
+max_tokens = 8192
 ```
 
 语义：
 
 - `[LLM]` 中的 `provider` 表示当前激活的供应商名
 - 程序运行时拼出节名 `LLM.<provider>`
-- 从对应节中读取：`base_url`、`api_key`、`model`
+- 从对应节中读取：`base_url`、`api_key`、`model`、`protocol`、`max_tokens`
 - `provider` 按原样使用，不做大小写归一化
+- `protocol` 取值 `openai`（缺省）或 `anthropic`，未知值按 `openai` 处理
+- `max_tokens` 仅 Anthropic 协议使用，缺省 `8192`，最小 `1`
 
 附加配置建议保留在 `tslt.ini` 中：
 
@@ -223,11 +232,17 @@ constexpr UINT WM_APP_TRANSLATE_ERROR = WM_APP + 2;
 
 ## 请求模型
 
-第一版按 OpenAI-compatible 接口实现。
+按 provider 配置的 `protocol` 选择请求格式，缺省 `openai`。
+
+### OpenAI（缺省）
 
 请求地址：
 
 - `base_url + /chat/completions`
+
+请求头：
+
+- `Authorization: Bearer <api_key>`
 
 请求体大致结构：
 
@@ -251,6 +266,42 @@ constexpr UINT WM_APP_TRANSLATE_ERROR = WM_APP + 2;
 响应读取：
 
 - 优先从 `choices[0].message.content` 提取翻译文本
+
+### Anthropic（`protocol = anthropic`）
+
+请求地址：
+
+- `base_url` 以 `/v1` 结尾时为 `base_url + /messages`，否则为 `base_url + /v1/messages`
+
+请求头：
+
+- `x-api-key: <api_key>`
+- `anthropic-version: 2023-06-01`
+
+请求体大致结构：
+
+```json
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 8192,
+  "system": "You are a translation engine. Return only the translated text.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Translate the following text to zh-CN:\n\n..."
+    }
+  ],
+  "temperature": 0.2
+}
+```
+
+- `max_tokens` 为 Anthropic 必填字段，取 provider 节的 `max_tokens`，缺省 `8192`
+- system prompt 放在顶层 `system`，不进 `messages`
+
+响应读取：
+
+- 优先从 content block 的 `text` 字段提取翻译文本
+- 提取失败时回退到 `message` 字段作为错误信息抛出
 
 ## 线程边界
 

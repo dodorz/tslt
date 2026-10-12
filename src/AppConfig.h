@@ -5,12 +5,16 @@
 #include <vector>
 #include <windows.h>
 
+#include "LlmProtocol.h"
+
 struct LlmProviderConfig {
     std::wstring sectionName;
     std::wstring displayName;
     std::wstring baseUrl;
     std::wstring apiKey;
     std::wstring model;
+    LlmProtocol protocol = LlmProtocol::OpenAi;
+    int maxTokens = 8192;
 };
 
 struct LlmConfig {
