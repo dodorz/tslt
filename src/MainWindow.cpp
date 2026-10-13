@@ -1039,6 +1039,9 @@ void MainWindow::SetInputText(const std::wstring& text) {
     const std::wstring normalized = NormalizeEditControlLineEndings(text);
     SetWindowTextW(inputEdit_, normalized.c_str());
     SendMessageW(inputEdit_, EM_SETSEL, static_cast<WPARAM>(normalized.size()), static_cast<LPARAM>(normalized.size()));
+    if (!normalized.empty()) {
+        OnInputChanged();
+    }
 }
 
 void MainWindow::SetOutputText(const std::wstring& text) {
