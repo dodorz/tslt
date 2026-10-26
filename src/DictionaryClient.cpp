@@ -1,6 +1,8 @@
 #include "DictionaryClient.h"
 
 #include <algorithm>
+#include <cwchar>
+#include <cwctype>
 #include <mutex>
 #include <stdexcept>
 #include <thread>
@@ -166,24 +168,150 @@ std::wstring FetchUrl(const std::wstring& url) {
     return Utf8ToWide(response);
 }
 
-std::wstring StripHtmlTags(const std::wstring& html) {
-    std::wstring result;
-    result.reserve(html.size());
-    bool insideTag = false;
-    for (wchar_t ch : html) {
-        if (ch == L'<') {
-            insideTag = true;
-            continue;
-        }
-        if (ch == L'>') {
-            insideTag = false;
-            continue;
-        }
-        if (!insideTag) {
-            result.push_back(ch);
+bool IsLineBreakTag(const std::wstring& tagName) {
+    static const wchar_t* const kLineBreakTags[] = {
+        L"br", L"div", L"p", L"li", L"ul", L"ol", L"dl", L"dt", L"dd",
+        L"tr", L"td", L"th", L"table", L"h1", L"h2", L"h3", L"h4", L"h5", L"h6", L"hr",
+    };
+    for (const wchar_t* tag : kLineBreakTags) {
+        if (tagName == tag) {
+            return true;
         }
     }
+    return false;
+}
+
+std::wstring DecodeHtmlEntities(const std::wstring& text) {
+    std::wstring result;
+    result.reserve(text.size());
+    for (size_t index = 0; index < text.size(); ++index) {
+        const wchar_t ch = text[index];
+        if (ch != L'&') {
+            result.push_back(ch);
+            continue;
+        }
+
+        const size_t semicolon = text.find(L';', index + 1);
+        if (semicolon == std::wstring::npos || semicolon - index > 10) {
+            result.push_back(ch);
+            continue;
+        }
+
+        const std::wstring entity = text.substr(index + 1, semicolon - index - 1);
+        unsigned long decodedCode = 0;
+        if (entity == L"nbsp") {
+            decodedCode = L' ';
+        } else if (entity == L"amp") {
+            decodedCode = L'&';
+        } else if (entity == L"lt") {
+            decodedCode = L'<';
+        } else if (entity == L"gt") {
+            decodedCode = L'>';
+        } else if (entity == L"quot") {
+            decodedCode = L'"';
+        } else if (entity == L"apos") {
+            decodedCode = L'\'';
+        } else if (entity.size() > 1 && entity[0] == L'#') {
+            const wchar_t* digits = entity.c_str() + 1;
+            int base = 10;
+            if (*digits == L'x' || *digits == L'X') {
+                base = 16;
+                ++digits;
+            }
+            wchar_t* end = nullptr;
+            const unsigned long code = std::wcstoul(digits, &end, base);
+            if (end != nullptr && *end == L'\0' && code > 0 && code <= 0x10FFFF) {
+                decodedCode = code;
+            }
+        }
+
+        if (decodedCode == 0) {
+            result.push_back(ch);
+            continue;
+        }
+
+        if (decodedCode > 0xFFFF) {
+            const unsigned long supplementary = decodedCode - 0x10000;
+            result.push_back(static_cast<wchar_t>(0xD800 + (supplementary >> 10)));
+            result.push_back(static_cast<wchar_t>(0xDC00 + (supplementary & 0x3FF)));
+        } else {
+            result.push_back(static_cast<wchar_t>(decodedCode));
+        }
+        index = semicolon;
+    }
     return result;
+}
+
+std::wstring NormalizeText(const std::wstring& text) {
+    std::wstring result;
+    result.reserve(text.size());
+    bool pendingSpace = false;
+    bool pendingLineBreak = false;
+    for (wchar_t ch : text) {
+        if (ch == L' ' || ch == L'\t' || ch == L'\v' || ch == L'\f' || ch == 0x00A0) {
+            if (!result.empty() && !pendingLineBreak) {
+                pendingSpace = true;
+            }
+            continue;
+        }
+        if (ch == L'\r' || ch == L'\n') {
+            pendingSpace = false;
+            if (!result.empty()) {
+                pendingLineBreak = true;
+            }
+            continue;
+        }
+        if (pendingLineBreak) {
+            result.push_back(L'\r');
+            result.push_back(L'\n');
+            pendingLineBreak = false;
+        } else if (pendingSpace) {
+            result.push_back(L' ');
+        }
+        pendingSpace = false;
+        result.push_back(ch);
+    }
+    return result;
+}
+
+std::wstring StripHtmlTags(const std::wstring& html) {
+    std::wstring withoutTags;
+    withoutTags.reserve(html.size() + 16);
+
+    size_t index = 0;
+    while (index < html.size()) {
+        const wchar_t ch = html[index];
+        if (ch != L'<') {
+            withoutTags.push_back(ch);
+            ++index;
+            continue;
+        }
+
+        const size_t tagEnd = html.find(L'>', index + 1);
+        if (tagEnd == std::wstring::npos) {
+            break;
+        }
+
+        std::wstring tagName;
+        for (size_t i = index + 1; i < tagEnd; ++i) {
+            const wchar_t tagChar = html[i];
+            if (tagChar == L' ' || tagChar == L'\t' || tagChar == L'\r' || tagChar == L'\n'
+                || tagChar == L'/' || tagChar == L'!') {
+                if (!tagName.empty()) {
+                    break;
+                }
+                continue;
+            }
+            tagName.push_back(static_cast<wchar_t>(std::towlower(tagChar)));
+        }
+
+        if (IsLineBreakTag(tagName)) {
+            withoutTags.push_back(L'\n');
+        }
+        index = tagEnd + 1;
+    }
+
+    return NormalizeText(DecodeHtmlEntities(withoutTags));
 }
 
 std::wstring ExtractBetween(const std::wstring& html, const std::wstring& startTag, const std::wstring& endTag) {
