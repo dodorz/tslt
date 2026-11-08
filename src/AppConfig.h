@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "LlmProtocol.h"
+#include "IniFile.h"
 
 struct LlmProviderConfig {
     std::wstring sectionName;
@@ -84,14 +85,23 @@ private:
     std::wstring GetExeDirectory() const;
     void EnsureParentDirectory(const std::wstring& filePath) const;
 
+    // Parses (and caches) the ini document so every key lookup sees the same values.
+    const ini::Document& ConfigDocument(const std::wstring& filePath) const;
+    void InvalidateDocument() const;
+
     std::wstring ReadString(const std::wstring& filePath, const std::wstring& section, const std::wstring& key,
         const std::wstring& defaultValue) const;
     std::vector<std::wstring> ReadSectionNames(const std::wstring& filePath) const;
+    std::vector<std::pair<std::wstring, std::wstring>> ReadSectionEntries(
+        const std::wstring& filePath, const std::wstring& section) const;
     int ReadInt(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, int defaultValue) const;
     double ReadDouble(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, double defaultValue) const;
 
 private:
     std::wstring appName_;
+    mutable ini::Document document_;
+    mutable std::wstring documentPath_;
+    mutable bool documentLoaded_ = false;
 };
 
 #endif

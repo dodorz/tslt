@@ -32,11 +32,12 @@ Output:
 
 ### Tests
 
-`src/Json.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h`, `src/WinHttpErrors.h` and `src/SseStream.h` are platform independent, so they have portable unit tests:
+`src/Json.h`, `src/IniFile.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h`, `src/WinHttpErrors.h` and `src/SseStream.h` are platform independent, so they have portable unit tests:
 
 ```bash
 cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
-cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests tslt_api_hints_tests tslt_winhttp_errors_tests tslt_sse_tests
+cmake --build build/tests --target tslt_json_protocol_tests tslt_ini_tests tslt_config_keys_tests \
+    tslt_api_hints_tests tslt_winhttp_errors_tests tslt_sse_tests
 ctest --test-dir build/tests --output-on-failure
 ```
 
@@ -103,6 +104,7 @@ Rules:
 - A base URL query string is preserved, so Azure endpoints such as `https://<resource>.openai.azure.com/openai/v1?api-version=...` work.
 - Network failures are reported with the operation, the reason and the WinHTTP code, for example `WinHttpReceiveResponse failed: timed out (12002)` or `WinHttpConnect failed: host name could not be resolved (12007)`.
 - Responses are parsed structurally (`choices[0].message.content`, `output[].content[].text`, or Anthropic `content[].text`), and API errors are reported from the `error.message` field.
+- `#` starts a comment anywhere on a line, so `model = Qwen/Qwen3-8B   # swap to Qwen3-30B` reads as `Qwen/Qwen3-8B`. A quoted value keeps the `#`, e.g. `name = "Qwen #1"`. `;` still comments out a whole line but is kept inside values, so API keys and URLs containing `;` survive. A duplicate key keeps its first definition.
 - `tslt.ini` is validated while loading. Keys the reader never consumes are reported instead of being silently ignored: the status bar shows the first problem and the output pane lists all of them. Keys are matched case-insensitively with `-`, `_` and spaces ignored, so `api_style`, `apikey` or `max-output-tokens` are flagged with a `did you mean ...` hint (for example `api_style` -> `protocol`). Values that cannot be parsed for `protocol` or `auth` are reported the same way, as are provider sections not spelled exactly `[LLM.<name>]`.
 - A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
 - Runtime window state is never written into `tslt.ini`.

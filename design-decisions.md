@@ -129,6 +129,14 @@ temperature 兼容回退：
 - 仅 4xx 触发重试；5xx 与鉴权等无关错误直接上报
 - 分类逻辑集中在 `src/ApiErrorHints.h`，可单独测试
 
+注释语法：
+
+- `#` 在行内任意位置开始注释，因此 `model = Qwen/Qwen3-8B  # note` 取值为 `Qwen/Qwen3-8B`
+- 值可用双引号包裹以保留 `#`，例如 `name = "Qwen #1"`；引号本身不进入值
+- `;` 仍可注释整行，但值内部的 `;` 保留（API key、URL 查询串可能含 `;`）
+- 重复键以第一次出现为准；节名与键名大小写不敏感，与旧的 profile API 行为一致
+- 解析由 `src/IniFile.h` 完成，支持 UTF-8（含 BOM）、UTF-16 LE/BE 与 ANSI；结果按文件缓存到 `ConfigStore` 中
+
 配置校验：
 
 - 加载 `tslt.ini` 时校验各节已知键，未识别的键不会静默丢弃，而是记录为告警

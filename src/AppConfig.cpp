@@ -1,11 +1,13 @@
 #include "AppConfig.h"
 
 #include <algorithm>
+#include <cstddef>
 #include <filesystem>
 #include <shlobj.h>
 #include <vector>
 
 #include "ConfigKeys.h"
+#include "IniFile.h"
 #include "StringUtils.h"
 
 namespace {
@@ -62,38 +64,96 @@ void AddUniquePrompt(std::vector<std::wstring>& prompts, const std::wstring& pro
     prompts.push_back(prompt);
 }
 
-// Reads every key of a section through the profile API so comments, value formats and
-// duplicates are handled consistently with ReadString/ReadInt.
-std::vector<std::pair<std::wstring, std::wstring>> ReadSectionEntries(const std::wstring& filePath,
-    const std::wstring& sectionName) {
-    std::vector<wchar_t> buffer(8192, L'\0');
-    DWORD copied = GetPrivateProfileSectionW(sectionName.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
-    while (copied >= buffer.size() - 2) {
-        buffer.resize(buffer.size() * 2, L'\0');
-        copied = GetPrivateProfileSectionW(sectionName.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
+// Reads a text file the way a hand-maintained config is expected to be encoded:
+// UTF-8 (with or without BOM), UTF-16 LE/BE with BOM, or ANSI (system code page).
+bool ReadUtf8OrAnsiTextFile(const std::wstring& filePath, std::wstring& text) {
+    text.clear();
+
+    HANDLE file = CreateFileW(filePath.c_str(), GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr,
+        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) {
+        return false;
     }
 
-    std::vector<std::pair<std::wstring, std::wstring>> entries;
-    const wchar_t* current = buffer.data();
-    while (*current != L'\0') {
-        std::wstring line(current);
-        current += line.size() + 1;
+    LARGE_INTEGER size{};
+    if (!GetFileSizeEx(file, &size) || size.QuadPart <= 0 || size.QuadPart > (16 * 1024 * 1024)) {
+        CloseHandle(file);
+        return false;
+    }
 
-        const size_t equals = line.find(L'=');
-        if (equals == std::wstring::npos) {
-            entries.emplace_back(TrimCopy(line), L"");
-            continue;
+    std::vector<char> bytes(static_cast<size_t>(size.QuadPart));
+    size_t read = 0;
+    bool ok = true;
+    while (read < bytes.size()) {
+        DWORD chunk = 0;
+        const DWORD want = static_cast<DWORD>(std::min<size_t>(bytes.size() - read, 64 * 1024));
+        if (!ReadFile(file, bytes.data() + read, want, &chunk, nullptr) || chunk == 0) {
+            ok = false;
+            break;
         }
-        entries.emplace_back(TrimCopy(line.substr(0, equals)), TrimCopy(line.substr(equals + 1)));
+        read += chunk;
     }
-    return entries;
+    CloseHandle(file);
+    if (!ok) {
+        return false;
+    }
+    bytes.resize(read);
+
+    const auto* raw = reinterpret_cast<const unsigned char*>(bytes.data());
+    // Decode UTF-16 pair by pair instead of reinterpreting the buffer, so the result
+    // does not depend on sizeof(wchar_t) or on host endianness.
+    const auto decodeUtf16 = [&](size_t start, bool bigEndian) {
+        text.reserve((bytes.size() - start) / 2);
+        for (size_t index = start; index + 1 < bytes.size(); index += 2) {
+            const unsigned int unit = bigEndian
+                ? (static_cast<unsigned int>(raw[index]) << 8) | raw[index + 1]
+                : (static_cast<unsigned int>(raw[index + 1]) << 8) | raw[index];
+            text.push_back(static_cast<wchar_t>(unit));
+        }
+    };
+
+    if (bytes.size() >= 2 && raw[0] == 0xFF && raw[1] == 0xFE) {
+        decodeUtf16(2, false);
+        return true;
+    }
+    if (bytes.size() >= 2 && raw[0] == 0xFE && raw[1] == 0xFF) {
+        decodeUtf16(2, true);
+        return true;
+    }
+
+    const size_t offset = bytes.size() >= 3 && raw[0] == 0xEF && raw[1] == 0xBB && raw[2] == 0xBF ? 3 : 0;
+    const std::string payload(bytes.begin() + static_cast<std::ptrdiff_t>(offset), bytes.end());
+
+    // Decode strictly: MB_ERR_INVALID_CHARS rejects ANSI files that happen to look
+    // like broken UTF-8, so they fall through to the ANSI branch instead of turning
+    // into mojibake. An empty file is valid UTF-8.
+    if (payload.empty()) {
+        return true;
+    }
+    const int utf8Length = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, payload.data(),
+        static_cast<int>(payload.size()), nullptr, 0);
+    if (utf8Length > 0) {
+        text.resize(static_cast<size_t>(utf8Length));
+        MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, payload.data(),
+            static_cast<int>(payload.size()), text.data(), utf8Length);
+        return true;
+    }
+
+    const int wideLength = MultiByteToWideChar(CP_ACP, 0, payload.data(), static_cast<int>(payload.size()), nullptr, 0);
+    if (wideLength <= 0) {
+        return false;
+    }
+    text.resize(static_cast<size_t>(wideLength));
+    MultiByteToWideChar(CP_ACP, 0, payload.data(), static_cast<int>(payload.size()), text.data(), wideLength);
+    return true;
 }
 
 // Reports keys that the loader never reads. Without this a mistyped key such as
 // `api_style = responses` silently keeps the default protocol.
-void AddUnknownKeyWarnings(const std::wstring& filePath, const std::wstring& sectionName,
+void AddUnknownKeyWarnings(const std::wstring& sectionName,
+    const std::vector<std::pair<std::wstring, std::wstring>>& entries,
     const std::vector<std::wstring>& knownKeys, std::vector<std::wstring>& warnings) {
-    for (const auto& [key, value] : ReadSectionEntries(filePath, sectionName)) {
+    for (const auto& [key, value] : entries) {
         (void)value;
         if (key.empty() || config_keys::IsKnownKey(knownKeys, key)) {
             continue;
@@ -171,7 +231,8 @@ AppConfig ConfigStore::Load() {
     }
 
     config.llm.provider = ReadString(config.loadedPath, L"LLM", L"provider", L"");
-    AddUnknownKeyWarnings(config.loadedPath, L"LLM", config_keys::LlmSectionKeys(), config.warnings);
+    AddUnknownKeyWarnings(L"LLM", ReadSectionEntries(config.loadedPath, L"LLM"),
+        config_keys::LlmSectionKeys(), config.warnings);
 
     const auto sectionNames = ReadSectionNames(config.loadedPath);
     for (const std::wstring& sectionName : sectionNames) {
@@ -183,7 +244,8 @@ AppConfig ConfigStore::Load() {
             continue;
         }
 
-        AddUnknownKeyWarnings(config.loadedPath, sectionName, config_keys::LlmProviderKeys(), config.warnings);
+        const auto entries = ReadSectionEntries(config.loadedPath, sectionName);
+        AddUnknownKeyWarnings(sectionName, entries, config_keys::LlmProviderKeys(), config.warnings);
 
         LlmProviderConfig provider;
         provider.sectionName = sectionName.substr(4);
@@ -224,8 +286,10 @@ AppConfig ConfigStore::Load() {
         config.llm.provider = ResolveProviderName(config.llm.provider, config.llm.providers);
     }
 
-    AddUnknownKeyWarnings(config.loadedPath, L"Translate", config_keys::TranslateKeys(), config.warnings);
-    AddUnknownKeyWarnings(config.loadedPath, L"Dictionary", config_keys::DictionaryKeys(), config.warnings);
+    AddUnknownKeyWarnings(L"Translate", ReadSectionEntries(config.loadedPath, L"Translate"),
+        config_keys::TranslateKeys(), config.warnings);
+    AddUnknownKeyWarnings(L"Dictionary", ReadSectionEntries(config.loadedPath, L"Dictionary"),
+        config_keys::DictionaryKeys(), config.warnings);
 
     config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
     config.translate.targetLanguage = ReadString(config.loadedPath, L"Translate", L"target_language", L"zh-CN");
@@ -264,6 +328,7 @@ std::vector<std::wstring> ConfigStore::LoadPromptHistory() const {
 
 bool ConfigStore::SavePromptHistory(const std::vector<std::wstring>& prompts) const {
     const std::wstring path = GetStatePath();
+    InvalidateDocument();
     EnsureParentDirectory(path);
 
     std::vector<std::wstring> uniquePrompts;
@@ -294,6 +359,7 @@ bool ConfigStore::SavePromptHistory(const std::vector<std::wstring>& prompts) co
 
 bool ConfigStore::SaveWindowState(const WindowState& state) const {
     const std::wstring path = GetStatePath();
+    InvalidateDocument();
     EnsureParentDirectory(path);
 
     const std::wstring section = L"Window";
@@ -378,32 +444,60 @@ void ConfigStore::EnsureParentDirectory(const std::wstring& filePath) const {
     std::filesystem::create_directories(filePath.substr(0, pos));
 }
 
+// Reads and caches the ini document so every key lookup in one Load() sees the same
+// content. A missing or unreadable file yields an empty document, and callers fall
+// back to their defaults.
+const ini::Document& ConfigStore::ConfigDocument(const std::wstring& filePath) const {
+    if (documentLoaded_ && documentPath_ == filePath) {
+        return document_;
+    }
+
+    document_.Clear();
+    documentPath_ = filePath;
+    documentLoaded_ = true;
+
+    std::wstring text;
+    if (!filePath.empty() && ReadUtf8OrAnsiTextFile(filePath, text)) {
+        document_.Parse(text);
+    }
+    return document_;
+}
+
+void ConfigStore::InvalidateDocument() const {
+    documentLoaded_ = false;
+    documentPath_.clear();
+}
+
 std::wstring ConfigStore::ReadString(const std::wstring& filePath, const std::wstring& section, const std::wstring& key,
     const std::wstring& defaultValue) const {
-    wchar_t buffer[2048] = {};
-    GetPrivateProfileStringW(section.c_str(), key.c_str(), defaultValue.c_str(), buffer, static_cast<DWORD>(std::size(buffer)), filePath.c_str());
-    return TrimCopy(buffer);
+    return ConfigDocument(filePath).Get(section, key, defaultValue);
 }
 
 std::vector<std::wstring> ConfigStore::ReadSectionNames(const std::wstring& filePath) const {
-    std::vector<wchar_t> buffer(8192, L'\0');
-    DWORD copied = GetPrivateProfileSectionNamesW(buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
-    while (copied >= buffer.size() - 2) {
-        buffer.resize(buffer.size() * 2, L'\0');
-        copied = GetPrivateProfileSectionNamesW(buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
-    }
+    return ConfigDocument(filePath).SectionNames();
+}
 
-    std::vector<std::wstring> names;
-    const wchar_t* current = buffer.data();
-    while (*current != L'\0') {
-        names.emplace_back(current);
-        current += names.back().size() + 1;
+std::vector<std::pair<std::wstring, std::wstring>> ConfigStore::ReadSectionEntries(
+    const std::wstring& filePath, const std::wstring& section) const {
+    std::vector<std::pair<std::wstring, std::wstring>> entries;
+    for (const ini::Document::Entry& entry : ConfigDocument(filePath).Entries(section)) {
+        entries.emplace_back(entry.key, entry.value);
     }
-    return names;
+    return entries;
 }
 
 int ConfigStore::ReadInt(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, int defaultValue) const {
-    return static_cast<int>(GetPrivateProfileIntW(section.c_str(), key.c_str(), defaultValue, filePath.c_str()));
+    const std::wstring value = ReadString(filePath, section, key, L"");
+    if (value.empty()) {
+        return defaultValue;
+    }
+    try {
+        size_t consumed = 0;
+        const int parsed = std::stoi(value, &consumed);
+        return consumed == value.size() ? parsed : defaultValue;
+    } catch (...) {
+        return defaultValue;
+    }
 }
 
 double ConfigStore::ReadDouble(const std::wstring& filePath, const std::wstring& section, const std::wstring& key, double defaultValue) const {
@@ -412,7 +506,9 @@ double ConfigStore::ReadDouble(const std::wstring& filePath, const std::wstring&
         return defaultValue;
     }
     try {
-        return std::stod(value);
+        size_t consumed = 0;
+        const double parsed = std::stod(value, &consumed);
+        return consumed == value.size() ? parsed : defaultValue;
     } catch (...) {
         return defaultValue;
     }

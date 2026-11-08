@@ -1,3 +1,6 @@
+# Lines starting with '#' or ';' are comments, and '#' also starts a trailing
+# comment: `model = Qwen/Qwen3-8B  # note` reads as Qwen/Qwen3-8B.
+# Quote a value to keep a literal '#': `name = "Qwen #1"`.
 [LLM]
 provider = Qwen
 
