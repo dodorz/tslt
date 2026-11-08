@@ -102,6 +102,13 @@ max_tokens = 8192
 - provider 节可覆盖 `[Translate].temperature`；取负值时请求体不包含 `temperature`（推理模型如 `gpt-5` 不接受该字段）
 - `max_tokens` 缺省 `8192`，最小 `1`；Anthropic 作为 `max_tokens` 发送，Responses 协议作为 `max_output_tokens` 发送；OpenAI chat completions 不发送该字段，沿用服务端默认值（新推理模型只接受 `max_completion_tokens`）
 
+网络超时：
+
+- WinHTTP 缺省 send/receive 超时为 30 秒，推理模型在首个字节前常需更久，会产生 `WinHttpReceiveResponse failed.`
+- provider 节支持 `timeout`（秒），缺省 `300`，范围 `10`-`3600`；`WinHttpSetTimeouts` 的解析超时上限取 60 秒
+- 网络失败信息包含操作名、原因与 WinHTTP 错误码，例如 `WinHttpReceiveResponse failed: timed out (12002)`
+- 错误码映射集中在 `src/WinHttpErrors.h`，可单独测试
+
 temperature 兼容回退：
 
 - 部分模型不接受非默认 `temperature`（如 `claude-haiku-5-5`、OpenAI 推理模型）

@@ -14,6 +14,9 @@ struct TranslateRequest {
     LlmProtocol protocol = LlmProtocol::OpenAi;
     LlmAuthStyle authStyle = LlmAuthStyle::Auto;
     int maxTokens = 8192;
+    // Receive/send timeout in seconds. Reasoning models can take minutes before the
+    // first byte, and the WinHTTP default (30s) times those requests out.
+    int timeoutSeconds = 300;
     std::wstring systemPrompt;
     std::wstring sourceLanguage;
     std::wstring targetLanguage;

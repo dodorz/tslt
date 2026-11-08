@@ -53,6 +53,29 @@ inline bool RejectsTemperature(const std::string& errorMessage) {
     return false;
 }
 
+// Short hint for gateway/server status codes; used when the body is empty or HTML.
+// Returns an empty string for statuses without a specific meaning.
+inline const char* DescribeHttpStatus(int statusCode) {
+    switch (statusCode) {
+    case 502:
+        return "bad gateway";
+    case 503:
+        return "service unavailable";
+    case 504:
+        return "gateway timeout";
+    case 520:
+    case 521:
+    case 524:
+        // Cloudflare-fronted endpoints use 524 when the upstream model does not answer
+        // before the edge timeout; the request itself was fine.
+        return "the upstream server did not respond in time";
+    case 429:
+        return "rate limited";
+    default:
+        return "";
+    }
+}
+
 // Only 4xx responses are retried; a 5xx or an auth failure means the request
 // itself was not the problem.
 inline bool ShouldRetryWithoutTemperature(int statusCode, const std::string& errorMessage) {

@@ -12,6 +12,7 @@
 #include "Messages.h"
 #include "Json.h"
 #include "StringUtils.h"
+#include "WinHttpErrors.h"
 
 namespace {
 
@@ -53,11 +54,14 @@ bool IsCancellationError(DWORD error) {
     return error == ERROR_WINHTTP_OPERATION_CANCELLED || error == ERROR_OPERATION_ABORTED;
 }
 
-void ThrowIfCancelledOr(const char* message) {
-    if (const DWORD error = GetLastError(); IsCancellationError(error)) {
+void ThrowIfCancelledOr(const char* operation) {
+    const DWORD error = GetLastError();
+    if (IsCancellationError(error)) {
         throw std::runtime_error("Translation aborted.");
     }
-    throw std::runtime_error(message);
+    // Include the WinHTTP error code: "WinHttpReceiveResponse failed." alone gives
+    // no hint about whether the host was unreachable, TLS failed or the server was slow.
+    throw std::runtime_error(winhttp_errors::DescribeFailure(operation, static_cast<long>(error)));
 }
 
 void RegisterActiveHandles(HINTERNET session, HINTERNET connection, HINTERNET request) {
@@ -608,9 +612,22 @@ std::wstring DescribeFailure(const JsonValue* root, DWORD statusCode, const std:
             return L"Translation response was incomplete.";
         }
     }
-    std::wstring message = statusCode >= 400
-        ? L"Translation request failed with HTTP " + std::to_wstring(statusCode) + L"."
-        : L"Translation response did not contain content.";
+    std::wstring message;
+    if (statusCode >= 400) {
+        message = L"Translation request failed with HTTP " + std::to_wstring(statusCode);
+        const char* hint = api_hints::DescribeHttpStatus(static_cast<int>(statusCode));
+        if (hint[0] != '\0') {
+            message += L" (";
+            message += Utf8ToWide(hint);
+            message += L")";
+            if (statusCode == 524 || statusCode == 504) {
+                message += L"; increase timeout in the provider section if the model is slow";
+            }
+        }
+        message += L".";
+    } else {
+        message = L"Translation response did not contain content.";
+    }
 
     const std::wstring snippet = TruncateForMessage(rawResponse);
     if (!TrimCopy(snippet).empty()) {
@@ -635,10 +652,16 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
     }
     RegisterActiveHandles(session, nullptr, nullptr);
 
+    // WinHTTP's default timeouts are 30s for send/receive. Reasoning models (and
+    // long chunks) routinely need longer before the first byte arrives, and the
+    // default produced a bare "WinHttpReceiveResponse failed" after 30 seconds.
+    const int timeoutMs = std::clamp(request.timeoutSeconds, 10, 3600) * 1000;
+    WinHttpSetTimeouts(session, std::min(timeoutMs, 60000), timeoutMs, timeoutMs, timeoutMs);
+
     HINTERNET connection = WinHttpConnect(session, parsed.host.c_str(), parsed.port, 0);
     if (connection == nullptr) {
         CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpConnect failed.");
+        ThrowIfCancelledOr("WinHttpConnect");
     }
     RegisterActiveHandles(session, connection, nullptr);
 
@@ -648,7 +671,7 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
     if (requestHandle == nullptr) {
         CloseOwnedHandle(connection, &ActiveTranslationState::connection);
         CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpOpenRequest failed.");
+        ThrowIfCancelledOr("WinHttpOpenRequest");
     }
     RegisterActiveHandles(session, connection, requestHandle);
 
@@ -661,14 +684,14 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
         CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
         CloseOwnedHandle(connection, &ActiveTranslationState::connection);
         CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpSendRequest failed.");
+        ThrowIfCancelledOr("WinHttpSendRequest");
     }
 
     if (!WinHttpReceiveResponse(requestHandle, nullptr)) {
         CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
         CloseOwnedHandle(connection, &ActiveTranslationState::connection);
         CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpReceiveResponse failed.");
+        ThrowIfCancelledOr("WinHttpReceiveResponse");
     }
 
     std::string response;
@@ -678,7 +701,7 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
             CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
             CloseOwnedHandle(connection, &ActiveTranslationState::connection);
             CloseOwnedHandle(session, &ActiveTranslationState::session);
-            ThrowIfCancelledOr("WinHttpQueryDataAvailable failed.");
+            ThrowIfCancelledOr("WinHttpQueryDataAvailable");
         }
         if (available == 0) {
             break;
@@ -690,7 +713,7 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
             CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
             CloseOwnedHandle(connection, &ActiveTranslationState::connection);
             CloseOwnedHandle(session, &ActiveTranslationState::session);
-            ThrowIfCancelledOr("WinHttpReadData failed.");
+            ThrowIfCancelledOr("WinHttpReadData");
         }
         chunk.resize(downloaded);
         response += chunk;

@@ -31,12 +31,12 @@ if(MINGW)
     target_link_options(tslt PRIVATE -municode)
 endif()
 
-# Portable tests for the platform independent JSON parser, protocol helpers and
-# configuration key validation.
+# Portable tests for the platform independent JSON parser, protocol helpers,
+# configuration key validation and error classification.
 option(TSLT_BUILD_TESTS "Build the portable unit tests" OFF)
 if(TSLT_BUILD_TESTS)
     enable_testing()
-    foreach(test_name IN ITEMS json_protocol config_keys api_hints)
+    foreach(test_name IN ITEMS json_protocol config_keys api_hints winhttp_errors)
         add_executable(tslt_${test_name}_tests tests/${test_name}_tests.cpp)
         target_include_directories(tslt_${test_name}_tests PRIVATE src)
         set_target_properties(tslt_${test_name}_tests PROPERTIES

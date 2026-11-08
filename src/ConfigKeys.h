@@ -40,6 +40,7 @@ inline const std::vector<std::wstring>& LlmProviderKeys() {
         L"protocol",
         L"auth",
         L"max_tokens",
+        L"timeout",
         L"temperature",
     };
     return keys;
@@ -117,6 +118,9 @@ inline const std::vector<KeyAlias>& KeyAliases() {
         {L"auth_type", L"auth"},
         {L"authtype", L"auth"},
         {L"maxtokens", L"max_tokens"},
+        {L"timeout_seconds", L"timeout"},
+        {L"request_timeout", L"timeout"},
+        {L"read_timeout", L"timeout"},
         {L"max_output_tokens", L"max_tokens"},
         {L"max_completion_tokens", L"max_tokens"},
     };

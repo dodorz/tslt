@@ -16,6 +16,17 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
+void TestHttpStatusHints() {
+    Check(std::string(api_hints::DescribeHttpStatus(502)) == "bad gateway", "502 hint");
+    Check(std::string(api_hints::DescribeHttpStatus(503)) == "service unavailable", "503 hint");
+    Check(std::string(api_hints::DescribeHttpStatus(504)) == "gateway timeout", "504 hint");
+    Check(std::string(api_hints::DescribeHttpStatus(524)).find("did not respond in time") != std::string::npos,
+        "524 hint");
+    Check(std::string(api_hints::DescribeHttpStatus(429)) == "rate limited", "429 hint");
+    Check(std::string(api_hints::DescribeHttpStatus(400)).empty(), "400 has no hint");
+    Check(std::string(api_hints::DescribeHttpStatus(200)).empty(), "200 has no hint");
+}
+
 void TestRejectsTemperature() {
     Check(api_hints::RejectsTemperature("claude-haiku-5-5 does not support non-default temperature"),
         "claude rejection is recognised");
@@ -49,6 +60,7 @@ void TestRejectsTemperature() {
 
 int main() {
     TestRejectsTemperature();
+    TestHttpStatusHints();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

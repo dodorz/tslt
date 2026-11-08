@@ -32,11 +32,11 @@ Output:
 
 ### Tests
 
-`src/Json.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h` and `src/ApiErrorHints.h` are platform independent, so they have portable unit tests:
+`src/Json.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h` and `src/WinHttpErrors.h` are platform independent, so they have portable unit tests:
 
 ```bash
 cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
-cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests tslt_api_hints_tests
+cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests tslt_api_hints_tests tslt_winhttp_errors_tests
 ctest --test-dir build/tests --output-on-failure
 ```
 
@@ -94,11 +94,13 @@ Rules:
   - `responses` - `POST <base_url>/responses` with `Authorization: Bearer`, body has `instructions` + `input` + `max_output_tokens`.
   - `anthropic` - `POST <base_url>/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`, body has `system` + `messages` + `max_tokens`.
   - Unknown values fall back to `openai`; `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `claude` are accepted aliases.
+- `timeout` is the send/receive timeout in seconds (default `300`, clamped to `10`-`3600`). WinHTTP's own default is 30 seconds, which is too short for reasoning models that emit reasoning tokens before the first output byte; raise it for slow models and lower it for fast local servers.
 - `max_tokens` defaults to `8192` and is sent as `max_tokens` (Anthropic) or `max_output_tokens` (Responses API); the OpenAI chat-completions body leaves the limit to the server default.
 - `base_url` normally already contains the version prefix (`https://api.openai.com/v1`, `https://api.siliconflow.cn/v1`). A `base_url` that already points at the final endpoint (for example `https://api.openai.com/v1/responses`) is used as-is. For `protocol = anthropic`, both `https://api.anthropic.com` and `https://api.anthropic.com/v1` work.
 - `auth` is optional and controls the credential header: `auto` (default, `Authorization: Bearer` except for Anthropic which uses `x-api-key`), `bearer`, `x-api-key`, `api-key` (Azure-style), or `none` for unauthenticated local servers such as Ollama.
 - `temperature` is inherited from `[Translate]`, and a provider section may override it. Set a negative value (for example `temperature = -1`) to omit `temperature` from the request body; reasoning-only models such as `gpt-5` reject it. If a model still rejects the configured temperature (for example `claude-haiku-5-5`), tslt retries the request once without `temperature` and keeps omitting it for the remaining chunks instead of failing; the status bar mentions the omission.
 - A base URL query string is preserved, so Azure endpoints such as `https://<resource>.openai.azure.com/openai/v1?api-version=...` work.
+- Network failures are reported with the operation, the reason and the WinHTTP code, for example `WinHttpReceiveResponse failed: timed out (12002)` or `WinHttpConnect failed: host name could not be resolved (12007)`.
 - Responses are parsed structurally (`choices[0].message.content`, `output[].content[].text`, or Anthropic `content[].text`), and API errors are reported from the `error.message` field.
 - `tslt.ini` is validated while loading. Keys the reader never consumes are reported instead of being silently ignored: the status bar shows the first problem and the output pane lists all of them. Keys are matched case-insensitively with `-`, `_` and spaces ignored, so `api_style`, `apikey` or `max-output-tokens` are flagged with a `did you mean ...` hint (for example `api_style` -> `protocol`). Values that cannot be parsed for `protocol` or `auth` are reported the same way, as are provider sections not spelled exactly `[LLM.<name>]`.
 - A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.

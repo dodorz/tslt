@@ -16,6 +16,9 @@ struct LlmProviderConfig {
     LlmProtocol protocol = LlmProtocol::OpenAi;
     LlmAuthStyle authStyle = LlmAuthStyle::Auto;
     int maxTokens = 8192;
+    // Send/receive timeout in seconds; WinHTTP defaults to 30s, which is too short for
+    // models that produce reasoning tokens before the first output byte.
+    int timeoutSeconds = 300;
     bool hasTemperature = false;
     double temperature = 0.2;
 };
