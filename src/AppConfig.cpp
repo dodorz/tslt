@@ -114,7 +114,16 @@ AppConfig ConfigStore::Load() {
         provider.apiKey = ReadString(config.loadedPath, sectionName, L"api_key", L"");
         provider.model = ReadString(config.loadedPath, sectionName, L"model", L"");
         provider.protocol = ParseLlmProtocol(ReadString(config.loadedPath, sectionName, L"protocol", L""));
+        provider.authStyle = ParseLlmAuthStyle(ReadString(config.loadedPath, sectionName, L"auth", L""));
         provider.maxTokens = std::max(1, ReadInt(config.loadedPath, sectionName, L"max_tokens", 8192));
+
+        // Optional per-provider override; a negative value omits temperature from the
+        // request body, which reasoning-only models (for example gpt-5) require.
+        const std::wstring temperatureValue = ReadString(config.loadedPath, sectionName, L"temperature", L"");
+        if (!temperatureValue.empty()) {
+            provider.hasTemperature = true;
+            provider.temperature = ReadDouble(config.loadedPath, sectionName, L"temperature", provider.temperature);
+        }
         config.llm.providers.push_back(std::move(provider));
     }
 

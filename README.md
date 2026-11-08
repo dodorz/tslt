@@ -5,7 +5,8 @@
 ## Current scope
 
 - Native Win32 desktop UI
-- OpenAI-compatible chat-completions backends (default)
+- OpenAI-compatible chat-completions backends (default, `protocol = openai`)
+- OpenAI Responses backends via `protocol = responses`
 - Anthropic Messages backends via `protocol = anthropic`
 - Configurable provider selection from `tslt.ini`
 - Target language selection, automatically set to English for predominantly Chinese input and Simplified Chinese for all other predominantly textual input
@@ -29,6 +30,16 @@ Output:
 
 - `build/vs2026-x64/Release/tslt.exe`
 
+### Tests
+
+`src/Json.h` and `src/LlmProtocol.h` are platform independent, so the JSON parser and protocol helpers have portable unit tests:
+
+```bash
+cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
+cmake --build build/tests --target tslt_tests
+ctest --test-dir build/tests --output-on-failure
+```
+
 ## Configuration
 
 Copy `tslt.ini.example` to `tslt.ini` next to the executable, or place it under `%AppData%/tslt/tslt.ini`.
@@ -41,6 +52,7 @@ provider = Qwen
 
 [LLM.Qwen]
 name = SiliconFlow Qwen
+protocol = openai
 base_url = https://api.siliconflow.cn/v1
 api_key = sk-XXXXX
 model = Qwen/Qwen3.5-4B
@@ -49,6 +61,14 @@ model = Qwen/Qwen3.5-4B
 base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
+
+[LLM.GPT]
+name = OpenAI GPT (Responses API)
+protocol = responses
+base_url = https://api.openai.com/v1
+api_key = sk-xxxxxx
+model = gpt-5-mini
+max_tokens = 8192
 
 [LLM.Claude]
 name = Anthropic Claude
@@ -69,9 +89,17 @@ Rules:
 - The active provider is selected by `[LLM].provider`.
 - Every provider is loaded from an `LLM.<name>` section.
 - `name` is optional and only affects the UI label.
-- `protocol` selects the request format: `openai` (default when omitted) sends `POST <base_url>/chat/completions` with `Authorization: Bearer`, `anthropic` sends `POST <base_url>/v1/messages` with `x-api-key` and `anthropic-version`.
-- For `protocol = anthropic`, `base_url` may or may not end with `/v1`; both `https://api.anthropic.com` and `https://api.anthropic.com/v1` work.
-- `max_tokens` is required by the Anthropic API and defaults to `8192` when omitted; it is ignored by the OpenAI protocol.
+- `protocol` selects the request format:
+  - `openai` (default when omitted) - `POST <base_url>/chat/completions` with `Authorization: Bearer`, body has `messages` (plus `temperature` unless disabled).
+  - `responses` - `POST <base_url>/responses` with `Authorization: Bearer`, body has `instructions` + `input` + `max_output_tokens`.
+  - `anthropic` - `POST <base_url>/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`, body has `system` + `messages` + `max_tokens`.
+  - Unknown values fall back to `openai`; `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `claude` are accepted aliases.
+- `max_tokens` defaults to `8192` and is sent as `max_tokens` (Anthropic) or `max_output_tokens` (Responses API); the OpenAI chat-completions body leaves the limit to the server default.
+- `base_url` normally already contains the version prefix (`https://api.openai.com/v1`, `https://api.siliconflow.cn/v1`). A `base_url` that already points at the final endpoint (for example `https://api.openai.com/v1/responses`) is used as-is. For `protocol = anthropic`, both `https://api.anthropic.com` and `https://api.anthropic.com/v1` work.
+- `auth` is optional and controls the credential header: `auto` (default, `Authorization: Bearer` except for Anthropic which uses `x-api-key`), `bearer`, `x-api-key`, `api-key` (Azure-style), or `none` for unauthenticated local servers such as Ollama.
+- `temperature` is inherited from `[Translate]`, and a provider section may override it. Set a negative value (for example `temperature = -1`) to omit `temperature` from the request body; reasoning-only models such as `gpt-5` reject it.
+- A base URL query string is preserved, so Azure endpoints such as `https://<resource>.openai.azure.com/openai/v1?api-version=...` work.
+- Responses are parsed structurally (`choices[0].message.content`, `output[].content[].text`, or Anthropic `content[].text`), and API errors are reported from the `error.message` field.
 - A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
 - Runtime window state is never written into `tslt.ini`.
 

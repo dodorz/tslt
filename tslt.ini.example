@@ -3,6 +3,7 @@ provider = Qwen
 
 [LLM.Qwen]
 name = SiliconFlow Qwen
+protocol = openai
 base_url = https://api.siliconflow.cn/v1
 api_key = sk-XXXXX
 model = Qwen/Qwen3.5-4B
@@ -11,6 +12,16 @@ model = Qwen/Qwen3.5-4B
 base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
+
+[LLM.GPT]
+name = OpenAI GPT (Responses API)
+protocol = responses
+base_url = https://api.openai.com/v1
+api_key = sk-xxxxxx
+model = gpt-5-mini
+max_tokens = 8192
+# Reasoning-only models reject temperature; a negative value omits it.
+# temperature = -1
 
 [LLM.Claude]
 name = Anthropic Claude

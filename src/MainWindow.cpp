@@ -731,7 +731,9 @@ void MainWindow::OnTranslateClicked() {
     }
 
     const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(providerIndex)];
-    if (TrimCopy(provider.baseUrl).empty() || TrimCopy(provider.apiKey).empty() || TrimCopy(provider.model).empty()) {
+    const bool needsApiKey = ResolveLlmAuthStyle(provider.protocol, provider.authStyle) != LlmAuthStyle::None;
+    if (TrimCopy(provider.baseUrl).empty() || TrimCopy(provider.model).empty() ||
+        (needsApiKey && TrimCopy(provider.apiKey).empty())) {
         SetOutputText(L"LLM configuration is incomplete.");
         SetTranslating(false, L"LLM configuration is incomplete.");
         return;
@@ -743,11 +745,12 @@ void MainWindow::OnTranslateClicked() {
     request.apiKey = provider.apiKey;
     request.model = provider.model;
     request.protocol = provider.protocol;
+    request.authStyle = provider.authStyle;
     request.maxTokens = provider.maxTokens;
     request.systemPrompt = systemPromptOverride_;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;
-    request.temperature = config_.translate.temperature;
+    request.temperature = provider.hasTemperature ? provider.temperature : config_.translate.temperature;
     request.inputText = inputText;
 
     SetOutputText(L"");

@@ -76,6 +76,13 @@ base_url = https://api.deepseek.com
 api_key = sk-xxxxxx
 model = deepseek-v4-flash
 
+[LLM.GPT]
+protocol = responses
+base_url = https://api.openai.com/v1
+api_key = sk-xxxxxx
+model = gpt-5-mini
+max_tokens = 8192
+
 [LLM.Claude]
 protocol = anthropic
 base_url = https://api.anthropic.com
@@ -88,10 +95,12 @@ max_tokens = 8192
 
 - `[LLM]` 中的 `provider` 表示当前激活的供应商名
 - 程序运行时拼出节名 `LLM.<provider>`
-- 从对应节中读取：`base_url`、`api_key`、`model`、`protocol`、`max_tokens`
+- 从对应节中读取：`base_url`、`api_key`、`model`、`protocol`、`auth`、`max_tokens`、可选的 `temperature`
 - `provider` 按原样使用，不做大小写归一化
-- `protocol` 取值 `openai`（缺省）或 `anthropic`，未知值按 `openai` 处理
-- `max_tokens` 仅 Anthropic 协议使用，缺省 `8192`，最小 `1`
+- `protocol` 取值 `openai`（缺省）、`responses` 或 `anthropic`，未知值按 `openai` 处理
+- `auth` 可选，取值 `auto`（缺省）、`bearer`、`x-api-key`、`api-key`、`none`，用于覆盖默认鉴权头
+- provider 节可覆盖 `[Translate].temperature`；取负值时请求体不包含 `temperature`（推理模型如 `gpt-5` 不接受该字段）
+- `max_tokens` 缺省 `8192`，最小 `1`；Anthropic 作为 `max_tokens` 发送，Responses 协议作为 `max_output_tokens` 发送；OpenAI chat completions 不发送该字段，沿用服务端默认值（新推理模型只接受 `max_completion_tokens`）
 
 附加配置建议保留在 `tslt.ini` 中：
 
@@ -301,7 +310,47 @@ constexpr UINT WM_APP_TRANSLATE_ERROR = WM_APP + 2;
 响应读取：
 
 - 优先从 content block 的 `text` 字段提取翻译文本
-- 提取失败时回退到 `message` 字段作为错误信息抛出
+- 提取失败时回退到 `error.message` / `message` 字段作为错误信息抛出
+
+### OpenAI Responses（`protocol = responses`）
+
+请求地址：
+
+- `base_url` 已以 `/responses` 结尾时直接使用，否则为 `base_url + /responses`
+- 裸主机（如 `https://api.openai.com`）会补 `/v1/responses`
+
+请求头：
+
+- 缺省 `Authorization: Bearer <api_key>`（可用 `auth` 覆盖）
+
+请求体大致结构：
+
+```json
+{
+  "model": "gpt-5-mini",
+  "instructions": "You are a translation engine. Return only the translated text.",
+  "input": "Translate the following text to zh-CN:\n\n...",
+  "max_output_tokens": 8192,
+  "temperature": 0.2
+}
+```
+
+- system prompt 放在顶层 `instructions`，用户内容放在顶层 `input`
+- 顶层 `input` 为字符串时按单条 user 消息处理，等价于只发一条用户消息
+- 不使用 `messages`，避免与 chat completions 请求体混淆
+
+响应读取：
+
+- 依次尝试 `output_text`、`output[].content[].text`（仅 `type = message` 的条目）
+- 状态为 `incomplete` 时使用 `incomplete_details.reason` 生成提示
+- 提取失败时回退到 `error.message` / `message` 字段
+
+## JSON 处理
+
+- `src/Json.h` 提供极简只读 JSON 解析器，不依赖第三方库
+- 支持对象、数组、字符串（含 `\uXXXX` 与代理对）、数字、布尔、null
+- 解析失败时按错误信息路径回退处理，不崩溃
+- 请求体仍为手写 JSON 字符串拼接，数字使用不受 locale 影响的格式化函数
 
 ## 线程边界
 
@@ -337,6 +386,9 @@ struct TranslateRequest {
     std::wstring baseUrl;
     std::wstring apiKey;
     std::wstring model;
+    LlmProtocol protocol;
+    LlmAuthStyle authStyle;
+    int maxTokens;
     std::wstring sourceLanguage;
     std::wstring targetLanguage;
     double temperature;

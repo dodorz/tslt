@@ -14,7 +14,10 @@ struct LlmProviderConfig {
     std::wstring apiKey;
     std::wstring model;
     LlmProtocol protocol = LlmProtocol::OpenAi;
+    LlmAuthStyle authStyle = LlmAuthStyle::Auto;
     int maxTokens = 8192;
+    bool hasTemperature = false;
+    double temperature = 0.2;
 };
 
 struct LlmConfig {

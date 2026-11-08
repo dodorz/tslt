@@ -1,6 +1,7 @@
 #ifndef TSLT_STRING_UTILS_H
 #define TSLT_STRING_UTILS_H
 
+#include <cstdio>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -113,57 +114,6 @@ inline std::string JsonEscapeUtf8(const std::wstring& value) {
     }
 
     return output;
-}
-
-inline std::wstring ExtractJsonStringField(const std::string& json, const std::string& key) {
-    const std::string needle = "\"" + key + "\"";
-    size_t pos = json.find(needle);
-    while (pos != std::string::npos) {
-        pos = json.find(':', pos + needle.size());
-        if (pos == std::string::npos) {
-            return L"";
-        }
-        ++pos;
-        while (pos < json.size() && std::isspace(static_cast<unsigned char>(json[pos]))) {
-            ++pos;
-        }
-        if (pos >= json.size() || json[pos] != '"') {
-            pos = json.find(needle, pos);
-            continue;
-        }
-        ++pos;
-
-        std::string value;
-        bool escaping = false;
-        for (; pos < json.size(); ++pos) {
-            const char ch = json[pos];
-            if (escaping) {
-                switch (ch) {
-                case '"': value.push_back('"'); break;
-                case '\\': value.push_back('\\'); break;
-                case '/': value.push_back('/'); break;
-                case 'b': value.push_back('\b'); break;
-                case 'f': value.push_back('\f'); break;
-                case 'n': value.push_back('\n'); break;
-                case 'r': value.push_back('\r'); break;
-                case 't': value.push_back('\t'); break;
-                default: value.push_back(ch); break;
-                }
-                escaping = false;
-                continue;
-            }
-            if (ch == '\\') {
-                escaping = true;
-                continue;
-            }
-            if (ch == '"') {
-                return Utf8ToWide(value);
-            }
-            value.push_back(ch);
-        }
-        return L"";
-    }
-    return L"";
 }
 
 inline std::wstring TrimLeadingLineBreaks(const std::wstring& value) {

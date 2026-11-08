@@ -12,6 +12,7 @@ struct TranslateRequest {
     std::wstring apiKey;
     std::wstring model;
     LlmProtocol protocol = LlmProtocol::OpenAi;
+    LlmAuthStyle authStyle = LlmAuthStyle::Auto;
     int maxTokens = 8192;
     std::wstring systemPrompt;
     std::wstring sourceLanguage;
