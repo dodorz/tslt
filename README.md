@@ -109,23 +109,30 @@ Rules:
 
 ## Release
 
-A GitHub Actions workflow at `.github/workflows/release.yml` creates a Windows release zip when you push a semantic version tag. Both `0.0.2` and `v0.0.2` will trigger the workflow.
+A GitHub Actions workflow at `.github/workflows/release.yml` creates Windows release zips when you push a version tag. Both `0.0.2` and `v0.0.2` will trigger the workflow.
 
 Examples:
 
 ```bash
-git tag 0.0.2
-git push origin 0.0.2
+# Annotated tags are required for `git push --follow-tags`.
+git tag -a 0.0.11 -m "tslt 0.0.11"
+git push origin 0.0.11
 ```
 
 ```bash
-git tag v0.0.2
-git push origin v0.0.2
+git tag -a v0.0.11 -m "tslt 0.0.11"
+git push --follow-tags
 ```
+
+The tag is the single source of truth for the version: `.github/scripts/derive-version.ps1` strips an optional leading `v` and passes the result to CMake as `-DTSLT_VERSION=...`, so the `FileVersion`/`ProductVersion` embedded in `tslt.exe` always matches the tag. The build then fails if the executable reports a different version. Tags must be numeric (`X.Y.Z` or `X.Y.Z.W`); prerelease suffixes such as `0.0.11-rc1` are rejected rather than producing a mislabelled binary.
+
+Local builds use `TSLT_VERSION_DEFAULT` from `CMakeLists.txt`; bump it after tagging if you want the default to track the latest release. Manual `workflow_dispatch` runs also fall back to that value.
 
 The uploaded asset is always named without the `v` prefix:
 
-- `tslt-0.0.2-windows-x64.zip`
+- `tslt-0.0.11-x86_64.zip`
+- `tslt-0.0.11-x86.zip`
+- `tslt-0.0.11-arm64.zip`
 
 ## License
 

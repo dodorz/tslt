@@ -28,6 +28,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # The tag is the single source of truth for the version. Manual runs fall back
+      # to TSLT_VERSION_DEFAULT in CMakeLists.txt.
+      - name: Derive version from ref
+        id: version
+        shell: pwsh
+        run: ./.github/scripts/derive-version.ps1 -RefName "${{ github.ref_name }}" -SourceDir .
+
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
         with:
@@ -35,22 +42,47 @@ jobs:
 
       - name: Configure
         shell: pwsh
-        run: cmake -S . -B "build/${{ matrix.package_suffix }}" -G "Ninja Multi-Config"
+        run: cmake -S . -B "build/${{ matrix.package_suffix }}" -G "Ninja Multi-Config" "-DTSLT_VERSION=$env:TSLT_VERSION"
 
       - name: Build
         shell: pwsh
         run: cmake --build "build/${{ matrix.package_suffix }}" --config Release
 
+      # Guards against the version silently drifting from the tag again.
+      - name: Verify embedded version
+        shell: pwsh
+        run: |
+          $exe = "build/${{ matrix.package_suffix }}/Release/tslt.exe"
+          if (-not (Test-Path $exe)) {
+              throw "Expected executable not found: $exe"
+          }
+          $info = (Get-Item $exe).VersionInfo
+          $expected = $env:TSLT_VERSION
+          $expectedFile = $env:TSLT_FILE_VERSION
+          Write-Host "exe ProductVersion=$($info.ProductVersion) FileVersion=$($info.FileVersion) expected=$expected (fixed $expectedFile)"
+
+          # Compare the numeric parts: Windows normalises the fixed version to X.Y.Z.W
+          # and may render the string form with a locale-specific separator.
+          $actualFile = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart).$($info.FilePrivatePart)"
+          if ($actualFile -ne $expectedFile) {
+              throw "Embedded file version $actualFile does not match $expectedFile (tag $expected)"
+          }
+          $actualProduct = ($info.ProductVersion -replace "[^0-9.]", "").TrimEnd(".")
+          if ($actualProduct -ne $expected -and $actualProduct -ne $expectedFile) {
+              throw "Embedded ProductVersion '$($info.ProductVersion)' does not match $expected"
+          }
+          Write-Host "Embedded version matches the tag."
+
       - name: Package
         shell: pwsh
         run: |
-          $refName = "${{ github.ref_name }}"
-          $version = $refName.StartsWith("v") ? $refName.Substring(1) : $refName
+          $version = "${{ steps.version.outputs.version }}"
           $packageName = "tslt-$version-${{ matrix.package_suffix }}"
           New-Item -ItemType Directory -Path dist -Force | Out-Null
           Copy-Item "build/${{ matrix.package_suffix }}/Release/tslt.exe" "dist/tslt.exe"
           Copy-Item "tslt.ini.example" "dist/tslt.ini.example"
           Compress-Archive -Path "dist/*" -DestinationPath "$packageName.zip" -Force
+          Write-Host "Packaged $packageName.zip"
 
       - name: Upload packaged artifact
         uses: actions/upload-artifact@v4

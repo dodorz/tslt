@@ -1,9 +1,35 @@
 cmake_minimum_required(VERSION 3.20)
-project(tslt VERSION 0.0.7 LANGUAGES CXX)
+
+# Release builds pass -DTSLT_VERSION=<version derived from the git tag>, so the
+# executable always reports the tag it was built from. Local builds fall back to
+# the last released version; bump TSLT_VERSION_DEFAULT when a new tag is pushed.
+set(TSLT_VERSION_DEFAULT "0.0.10")
+
+# Only set by the release workflow (-DTSLT_VERSION=<tag without the leading v>).
+set(TSLT_VERSION "" CACHE STRING "Version embedded in the executable; set by the release workflow")
+if(TSLT_VERSION STREQUAL "")
+    set(TSLT_VERSION "${TSLT_VERSION_DEFAULT}")
+elseif(NOT TSLT_VERSION MATCHES "^[0-9]+\\.[0-9]+\\.[0-9]+(\\.[0-9]+)?$")
+    # CMake's regex engine has no {n,m} repetition, and project(VERSION ...) plus the
+    # resource script only understand numeric components. Failing here is deliberate:
+    # silently falling back would ship a binary that reports the wrong version.
+    message(FATAL_ERROR "TSLT_VERSION='${TSLT_VERSION}' is not a dotted numeric version (X.Y.Z or X.Y.Z.W)")
+endif()
+
+project(tslt VERSION "${TSLT_VERSION}" LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+
+message(STATUS "tslt version: ${PROJECT_VERSION}")
+
+# The resource script needs all four numeric components; a three-part version
+# (the common case) leaves PROJECT_VERSION_TWEAK empty.
+set(TSLT_FILE_VERSION_TWEAK "${PROJECT_VERSION_TWEAK}")
+if(TSLT_FILE_VERSION_TWEAK STREQUAL "")
+    set(TSLT_FILE_VERSION_TWEAK "0")
+endif()
 
 configure_file(src/version.rc.in version.rc @ONLY)
 
