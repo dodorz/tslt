@@ -57,6 +57,8 @@ struct AppConfig {
     LlmConfig llm;
     TranslateConfig translate;
     DictionaryConfig dictionary;
+    // Non-fatal configuration problems (unknown keys, misplaced sections) found while loading.
+    std::vector<std::wstring> warnings;
 };
 
 class ConfigStore {

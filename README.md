@@ -32,11 +32,11 @@ Output:
 
 ### Tests
 
-`src/Json.h` and `src/LlmProtocol.h` are platform independent, so the JSON parser and protocol helpers have portable unit tests:
+`src/Json.h`, `src/LlmProtocol.h` and `src/ConfigKeys.h` are platform independent, so they have portable unit tests:
 
 ```bash
 cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
-cmake --build build/tests --target tslt_tests
+cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests
 ctest --test-dir build/tests --output-on-failure
 ```
 
@@ -100,6 +100,7 @@ Rules:
 - `temperature` is inherited from `[Translate]`, and a provider section may override it. Set a negative value (for example `temperature = -1`) to omit `temperature` from the request body; reasoning-only models such as `gpt-5` reject it.
 - A base URL query string is preserved, so Azure endpoints such as `https://<resource>.openai.azure.com/openai/v1?api-version=...` work.
 - Responses are parsed structurally (`choices[0].message.content`, `output[].content[].text`, or Anthropic `content[].text`), and API errors are reported from the `error.message` field.
+- `tslt.ini` is validated while loading. Keys the reader never consumes are reported instead of being silently ignored: the status bar shows the first problem and the output pane lists all of them. Keys are matched case-insensitively with `-`, `_` and spaces ignored, so `api_style`, `apikey` or `max-output-tokens` are flagged with a `did you mean ...` hint (for example `api_style` -> `protocol`). Values that cannot be parsed for `protocol` or `auth` are reported the same way, as are provider sections not spelled exactly `[LLM.<name>]`.
 - A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
 - Runtime window state is never written into `tslt.ini`.
 

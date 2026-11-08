@@ -102,6 +102,15 @@ max_tokens = 8192
 - provider 节可覆盖 `[Translate].temperature`；取负值时请求体不包含 `temperature`（推理模型如 `gpt-5` 不接受该字段）
 - `max_tokens` 缺省 `8192`，最小 `1`；Anthropic 作为 `max_tokens` 发送，Responses 协议作为 `max_output_tokens` 发送；OpenAI chat completions 不发送该字段，沿用服务端默认值（新推理模型只接受 `max_completion_tokens`）
 
+配置校验：
+
+- 加载 `tslt.ini` 时校验各节已知键，未识别的键不会静默丢弃，而是记录为告警
+- 键名比较忽略大小写以及 `-`、`_`、空白，因此 `api_style`、`apikey`、`max-output-tokens` 都能被识别为拼写错误
+- 常见别名会给出 `did you mean` 提示，例如 `api_style` → `protocol`、`apikey` → `api_key`、`maxtoken` → `max_tokens`
+- `protocol` / `auth` 的取值无法解析时同样告警（未知值仍按缺省处理）
+- 节名必须是严格的 `[LLM.<name>]`；`[Llm.Foo]`、`[LLM-Foo]` 会给出修正建议
+- 告警展示：状态栏显示首条并标注总数，输出框列出全部告警及配置文件路径，不阻塞启动
+
 附加配置建议保留在 `tslt.ini` 中：
 
 ```ini

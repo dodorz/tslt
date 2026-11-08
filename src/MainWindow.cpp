@@ -576,10 +576,42 @@ bool MainWindow::OnCreate() {
         SetInputText(initialInputText_);
     }
 
+    if (!config_.warnings.empty()) {
+        ShowConfigWarningsInOutput();
+    }
+
     ApplyWindowState();
-    SetTranslating(false, config_.loadedPath.empty() ? L"Ready. tslt.ini not found." : L"Ready");
+    SetTranslating(false, BuildReadyStatusText());
     SetFocus(inputEdit_);
     return true;
+}
+
+// Unknown keys are ignored by the ini reader, so the parsed configuration would silently
+// fall back to defaults (for example `api_style = responses` never selecting Responses).
+// Listing them in the output pane keeps that discoverable without blocking startup.
+void MainWindow::ShowConfigWarningsInOutput() {
+    std::wstring text = L"tslt.ini contains ignored entries:\n";
+    for (const std::wstring& warning : config_.warnings) {
+        text += L"\n" + warning;
+    }
+    text += L"\n\nFile: " + config_.loadedPath;
+    SetOutputText(text);
+}
+
+std::wstring MainWindow::BuildReadyStatusText() const {
+    if (config_.loadedPath.empty()) {
+        return L"Ready. tslt.ini not found.";
+    }
+    if (config_.warnings.empty()) {
+        return L"Ready";
+    }
+
+    // Keep the first warning fully visible and hint at the rest; the status bar is narrow.
+    std::wstring status = L"Config warning: " + config_.warnings.front();
+    if (config_.warnings.size() > 1) {
+        status += L" (+" + std::to_wstring(config_.warnings.size() - 1) + L" more)";
+    }
+    return status;
 }
 
 void MainWindow::OnSize(UINT sizeType, int width, int height) {

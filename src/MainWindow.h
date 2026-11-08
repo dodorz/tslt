@@ -39,6 +39,8 @@ private:
     void OnDictLookupError(struct DictionaryLookupError* error);
     void LayoutControls(int clientWidth, int clientHeight);
     void SetTranslating(bool translating, const std::wstring& statusText = L"");
+    std::wstring BuildReadyStatusText() const;
+    void ShowConfigWarningsInOutput();
     void UpdateWindowState();
     void ApplyWindowState();
     void CenterWindow();

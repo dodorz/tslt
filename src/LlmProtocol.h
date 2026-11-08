@@ -31,23 +31,34 @@ inline std::wstring NormalizeToken(const std::wstring& value) {
 }
 
 // Accepts "openai", "responses", "openai-responses", "anthropic", ...
-// Separators (-, _, whitespace) are ignored, unknown values fall back to OpenAI chat completions.
-inline LlmProtocol ParseLlmProtocol(const std::wstring& value) {
+// Separators (-, _, whitespace) are ignored. Returns false for unrecognised values so
+// callers can report a typo instead of silently using the default protocol.
+inline bool TryParseLlmProtocol(const std::wstring& value, LlmProtocol& protocol) {
     const std::wstring normalized = NormalizeToken(value);
 
     if (normalized == L"anthropic" || normalized == L"anthropicmessages" || normalized == L"claude" ||
         normalized == L"messages") {
-        return LlmProtocol::Anthropic;
+        protocol = LlmProtocol::Anthropic;
+        return true;
     }
     if (normalized == L"responses" || normalized == L"response" || normalized == L"openairesponses" ||
         normalized == L"responsesapi") {
-        return LlmProtocol::OpenAiResponses;
+        protocol = LlmProtocol::OpenAiResponses;
+        return true;
     }
     if (normalized == L"chat" || normalized == L"chatcompletions" || normalized == L"openai" ||
         normalized == L"openaichat" || normalized == L"openaichatcompletions") {
-        return LlmProtocol::OpenAi;
+        protocol = LlmProtocol::OpenAi;
+        return true;
     }
-    return LlmProtocol::OpenAi;
+    return false;
+}
+
+// Unknown values fall back to OpenAI chat completions.
+inline LlmProtocol ParseLlmProtocol(const std::wstring& value) {
+    LlmProtocol protocol = LlmProtocol::OpenAi;
+    TryParseLlmProtocol(value, protocol);
+    return protocol;
 }
 
 enum class LlmAuthStyle {
@@ -61,21 +72,36 @@ enum class LlmAuthStyle {
 // "auto" picks the style expected by the protocol; "bearer" sends
 // Authorization: Bearer, "x-api-key" sends the Anthropic style header,
 // "api-key" sends an Azure style api-key header, "none" sends no credentials.
-inline LlmAuthStyle ParseLlmAuthStyle(const std::wstring& value) {
+// Returns false for unrecognised values so callers can report a typo.
+inline bool TryParseLlmAuthStyle(const std::wstring& value, LlmAuthStyle& style) {
     const std::wstring normalized = NormalizeToken(value);
+    if (normalized.empty() || normalized == L"auto") {
+        style = LlmAuthStyle::Auto;
+        return true;
+    }
     if (normalized == L"bearer" || normalized == L"authorization" || normalized == L"authorizationbearer") {
-        return LlmAuthStyle::Bearer;
+        style = LlmAuthStyle::Bearer;
+        return true;
     }
     if (normalized == L"xapikey" || normalized == L"anthropic") {
-        return LlmAuthStyle::XApiKey;
+        style = LlmAuthStyle::XApiKey;
+        return true;
     }
     if (normalized == L"apikey") {
-        return LlmAuthStyle::ApiKey;
+        style = LlmAuthStyle::ApiKey;
+        return true;
     }
     if (normalized == L"none" || normalized == L"no" || normalized == L"off" || normalized == L"empty") {
-        return LlmAuthStyle::None;
+        style = LlmAuthStyle::None;
+        return true;
     }
-    return LlmAuthStyle::Auto;
+    return false;
+}
+
+inline LlmAuthStyle ParseLlmAuthStyle(const std::wstring& value) {
+    LlmAuthStyle style = LlmAuthStyle::Auto;
+    TryParseLlmAuthStyle(value, style);
+    return style;
 }
 
 inline LlmAuthStyle ResolveLlmAuthStyle(LlmProtocol protocol, LlmAuthStyle style) {

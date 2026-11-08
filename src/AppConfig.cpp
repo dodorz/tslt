@@ -5,6 +5,7 @@
 #include <shlobj.h>
 #include <vector>
 
+#include "ConfigKeys.h"
 #include "StringUtils.h"
 
 namespace {
@@ -61,6 +62,80 @@ void AddUniquePrompt(std::vector<std::wstring>& prompts, const std::wstring& pro
     prompts.push_back(prompt);
 }
 
+// Reads every key of a section through the profile API so comments, value formats and
+// duplicates are handled consistently with ReadString/ReadInt.
+std::vector<std::pair<std::wstring, std::wstring>> ReadSectionEntries(const std::wstring& filePath,
+    const std::wstring& sectionName) {
+    std::vector<wchar_t> buffer(8192, L'\0');
+    DWORD copied = GetPrivateProfileSectionW(sectionName.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
+    while (copied >= buffer.size() - 2) {
+        buffer.resize(buffer.size() * 2, L'\0');
+        copied = GetPrivateProfileSectionW(sectionName.c_str(), buffer.data(), static_cast<DWORD>(buffer.size()), filePath.c_str());
+    }
+
+    std::vector<std::pair<std::wstring, std::wstring>> entries;
+    const wchar_t* current = buffer.data();
+    while (*current != L'\0') {
+        std::wstring line(current);
+        current += line.size() + 1;
+
+        const size_t equals = line.find(L'=');
+        if (equals == std::wstring::npos) {
+            entries.emplace_back(TrimCopy(line), L"");
+            continue;
+        }
+        entries.emplace_back(TrimCopy(line.substr(0, equals)), TrimCopy(line.substr(equals + 1)));
+    }
+    return entries;
+}
+
+// Reports keys that the loader never reads. Without this a mistyped key such as
+// `api_style = responses` silently keeps the default protocol.
+void AddUnknownKeyWarnings(const std::wstring& filePath, const std::wstring& sectionName,
+    const std::vector<std::wstring>& knownKeys, std::vector<std::wstring>& warnings) {
+    for (const auto& [key, value] : ReadSectionEntries(filePath, sectionName)) {
+        (void)value;
+        if (key.empty() || config_keys::IsKnownKey(knownKeys, key)) {
+            continue;
+        }
+        warnings.push_back(config_keys::DescribeUnknownKey(sectionName, key, knownKeys));
+    }
+}
+
+// A provider section must be spelled exactly "LLM.<name>". Near misses such as
+// "Llm.RightGPT" or "LLM-RightGPT" would otherwise be dropped without any feedback.
+bool LooksLikeLlmSection(const std::wstring& sectionName) {
+    const std::wstring lowered = config_keys::NormalizeKey(sectionName);
+    if (lowered.rfind(L"llm", 0) != 0 || lowered.size() <= 3) {
+        return false;
+    }
+    const wchar_t separator = sectionName[3];
+    return separator == L'.' || separator == L'-' || separator == L'_' ||
+        separator == L' ' || separator == L'\t';
+}
+
+bool IsProviderSectionName(const std::wstring& sectionName) {
+    constexpr wchar_t prefix[] = L"LLM.";
+    const size_t prefixLength = std::size(prefix) - 1;
+    return sectionName.size() > prefixLength && sectionName.rfind(prefix, 0) == 0;
+}
+
+std::wstring SuggestLlmSectionName(const std::wstring& sectionName) {
+    if (!LooksLikeLlmSection(sectionName)) {
+        return L"";
+    }
+
+    std::wstring suffix = sectionName.substr(3);
+    while (!suffix.empty() && (suffix.front() == L'.' || suffix.front() == L'-' || suffix.front() == L'_' ||
+               suffix.front() == L' ' || suffix.front() == L'\t')) {
+        suffix.erase(suffix.begin());
+    }
+    if (suffix.empty()) {
+        return L"";
+    }
+    return L"LLM." + suffix;
+}
+
 std::wstring ResolveProviderName(const std::wstring& configuredProvider, const std::vector<LlmProviderConfig>& providers) {
     if (providers.empty()) {
         return configuredProvider;
@@ -96,16 +171,22 @@ AppConfig ConfigStore::Load() {
     }
 
     config.llm.provider = ReadString(config.loadedPath, L"LLM", L"provider", L"");
+    AddUnknownKeyWarnings(config.loadedPath, L"LLM", config_keys::LlmSectionKeys(), config.warnings);
 
     const auto sectionNames = ReadSectionNames(config.loadedPath);
     for (const std::wstring& sectionName : sectionNames) {
-        constexpr wchar_t prefix[] = L"LLM.";
-        if (sectionName.rfind(prefix, 0) != 0 || sectionName.size() <= std::size(prefix) - 1) {
+        if (!IsProviderSectionName(sectionName)) {
+            if (LooksLikeLlmSection(sectionName)) {
+                config.warnings.push_back(config_keys::DescribeIgnoredSection(
+                    sectionName, SuggestLlmSectionName(sectionName)));
+            }
             continue;
         }
 
+        AddUnknownKeyWarnings(config.loadedPath, sectionName, config_keys::LlmProviderKeys(), config.warnings);
+
         LlmProviderConfig provider;
-        provider.sectionName = sectionName.substr(std::size(prefix) - 1);
+        provider.sectionName = sectionName.substr(4);
         provider.displayName = ReadString(config.loadedPath, sectionName, L"name", L"");
         if (provider.displayName.empty()) {
             provider.displayName = provider.sectionName;
@@ -113,8 +194,18 @@ AppConfig ConfigStore::Load() {
         provider.baseUrl = ReadString(config.loadedPath, sectionName, L"base_url", L"");
         provider.apiKey = ReadString(config.loadedPath, sectionName, L"api_key", L"");
         provider.model = ReadString(config.loadedPath, sectionName, L"model", L"");
-        provider.protocol = ParseLlmProtocol(ReadString(config.loadedPath, sectionName, L"protocol", L""));
-        provider.authStyle = ParseLlmAuthStyle(ReadString(config.loadedPath, sectionName, L"auth", L""));
+        const std::wstring protocolValue = ReadString(config.loadedPath, sectionName, L"protocol", L"");
+        if (!protocolValue.empty() && !TryParseLlmProtocol(protocolValue, provider.protocol)) {
+            config.warnings.push_back(config_keys::DescribeInvalidValue(sectionName, L"protocol", protocolValue,
+                L"openai, responses or anthropic"));
+        }
+
+        const std::wstring authValue = ReadString(config.loadedPath, sectionName, L"auth", L"");
+        if (!authValue.empty() && !TryParseLlmAuthStyle(authValue, provider.authStyle)) {
+            config.warnings.push_back(config_keys::DescribeInvalidValue(sectionName, L"auth", authValue,
+                L"auto, bearer, x-api-key, api-key or none"));
+        }
+
         provider.maxTokens = std::max(1, ReadInt(config.loadedPath, sectionName, L"max_tokens", 8192));
 
         // Optional per-provider override; a negative value omits temperature from the
@@ -130,6 +221,9 @@ AppConfig ConfigStore::Load() {
     if (!config.llm.providers.empty()) {
         config.llm.provider = ResolveProviderName(config.llm.provider, config.llm.providers);
     }
+
+    AddUnknownKeyWarnings(config.loadedPath, L"Translate", config_keys::TranslateKeys(), config.warnings);
+    AddUnknownKeyWarnings(config.loadedPath, L"Dictionary", config_keys::DictionaryKeys(), config.warnings);
 
     config.translate.sourceLanguage = ReadString(config.loadedPath, L"Translate", L"source_language", L"auto");
     config.translate.targetLanguage = ReadString(config.loadedPath, L"Translate", L"target_language", L"zh-CN");
