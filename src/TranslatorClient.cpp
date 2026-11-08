@@ -8,6 +8,7 @@
 #include <vector>
 #include <winhttp.h>
 
+#include "ApiErrorHints.h"
 #include "Messages.h"
 #include "Json.h"
 #include "StringUtils.h"
@@ -27,6 +28,21 @@ struct ActiveTranslationState {
     HINTERNET connection = nullptr;
     HINTERNET request = nullptr;
     bool cancelRequested = false;
+};
+
+// Carries the HTTP status so callers can decide whether a request is worth retrying.
+class ApiError : public std::runtime_error {
+public:
+    ApiError(std::string message, int statusCode)
+        : std::runtime_error(std::move(message)), statusCode_(statusCode) {
+    }
+
+    int statusCode() const noexcept {
+        return statusCode_;
+    }
+
+private:
+    int statusCode_ = 0;
 };
 
 ActiveTranslationState g_activeTranslation;
@@ -697,10 +713,31 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
     std::wstring content = document != nullptr ? ExtractTranslationText(request, *document) : L"";
     if (content.empty()) {
         const std::wstring message = DescribeFailure(document, statusCode, response);
-        throw std::runtime_error(WideToUtf8(message));
+        throw ApiError(WideToUtf8(message), static_cast<int>(statusCode));
     }
 
     return content;
+}
+
+// Some models reject a non-default temperature (Claude Haiku 5.5, OpenAI reasoning
+// models). Retry once without the field instead of failing the translation, and
+// remember that for the remaining chunks.
+std::wstring SendTranslationWithTemperatureFallback(TranslateRequest request, bool& temperatureOmitted) {
+    if (temperatureOmitted) {
+        request.temperature = -1.0;
+    }
+
+    try {
+        return SendTranslationRequest(request);
+    } catch (const ApiError& error) {
+        if (temperatureOmitted || !api_hints::ShouldRetryWithoutTemperature(error.statusCode(), error.what())) {
+            throw;
+        }
+    }
+
+    temperatureOmitted = true;
+    request.temperature = -1.0;
+    return SendTranslationRequest(request);
 }
 
 void PostError(HWND owner, const std::wstring& message) {
@@ -710,10 +747,10 @@ void PostError(HWND owner, const std::wstring& message) {
     }
 }
 
-std::wstring TranslateWithChunking(const TranslateRequest& request) {
+std::wstring TranslateWithChunking(const TranslateRequest& request, bool& temperatureOmitted) {
     const std::vector<std::wstring> chunks = BuildTranslationChunks(request.inputText);
     if (chunks.size() == 1) {
-        return SendTranslationRequest(request);
+        return SendTranslationWithTemperatureFallback(request, temperatureOmitted);
     }
 
     std::wstring combined;
@@ -725,7 +762,7 @@ std::wstring TranslateWithChunking(const TranslateRequest& request) {
             throw std::runtime_error("Translation aborted.");
         }
         chunkRequest.inputText = chunk;
-        combined += SendTranslationRequest(chunkRequest);
+        combined += SendTranslationWithTemperatureFallback(chunkRequest, temperatureOmitted);
     }
 
     return combined;
@@ -750,7 +787,9 @@ void StartTranslateWorker(TranslateRequest request) {
                 return;
             }
 
-            auto* result = new TranslateResult{TrimLeadingLineBreaks(TranslateWithChunking(request))};
+            bool temperatureOmitted = false;
+            const std::wstring translated = TranslateWithChunking(request, temperatureOmitted);
+            auto* result = new TranslateResult{TrimLeadingLineBreaks(translated), temperatureOmitted};
             EndActiveTranslation();
             if (!PostMessageW(request.ownerHwnd, WM_APP_TRANSLATE_DONE, 0, reinterpret_cast<LPARAM>(result))) {
                 delete result;

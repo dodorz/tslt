@@ -891,11 +891,18 @@ void MainWindow::OnSystemPromptClicked() {
 void MainWindow::OnTranslateDone(TranslateResult* result) {
     if (result != nullptr) {
         const std::wstring text = result->translatedText;
+        const bool temperatureOmitted = result->temperatureOmitted;
         SetOutputText(text);
         delete result;
         if (!TrimCopy(text).empty()) {
             CopyTextToClipboard(text);
-            SetTranslating(false, L"Done. Copied to clipboard.");
+            SetTranslating(false, temperatureOmitted
+                ? L"Done. Copied to clipboard. Model rejected temperature, so it was omitted."
+                : L"Done. Copied to clipboard.");
+            return;
+        }
+        if (temperatureOmitted) {
+            SetTranslating(false, L"Done. Model rejected temperature, so it was omitted.");
             return;
         }
     }

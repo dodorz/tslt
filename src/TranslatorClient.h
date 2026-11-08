@@ -23,6 +23,9 @@ struct TranslateRequest {
 
 struct TranslateResult {
     std::wstring translatedText;
+    // Set when the provider rejected the configured temperature and the request
+    // was retried without it (see ApiErrorHints.h).
+    bool temperatureOmitted = false;
 };
 
 struct TranslateError {

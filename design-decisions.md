@@ -102,6 +102,14 @@ max_tokens = 8192
 - provider 节可覆盖 `[Translate].temperature`；取负值时请求体不包含 `temperature`（推理模型如 `gpt-5` 不接受该字段）
 - `max_tokens` 缺省 `8192`，最小 `1`；Anthropic 作为 `max_tokens` 发送，Responses 协议作为 `max_output_tokens` 发送；OpenAI chat completions 不发送该字段，沿用服务端默认值（新推理模型只接受 `max_completion_tokens`）
 
+temperature 兼容回退：
+
+- 部分模型不接受非默认 `temperature`（如 `claude-haiku-5-5`、OpenAI 推理模型）
+- 收到 4xx 且错误信息表明不支持 `temperature` 时，自动去掉 `temperature` 重试一次
+- 重试成功后，同一输入的后续分块也不再发送 `temperature`
+- 仅 4xx 触发重试；5xx 与鉴权等无关错误直接上报
+- 分类逻辑集中在 `src/ApiErrorHints.h`，可单独测试
+
 配置校验：
 
 - 加载 `tslt.ini` 时校验各节已知键，未识别的键不会静默丢弃，而是记录为告警
