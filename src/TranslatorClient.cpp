@@ -11,6 +11,7 @@
 #include "ApiErrorHints.h"
 #include "Messages.h"
 #include "Json.h"
+#include "SseStream.h"
 #include "StringUtils.h"
 #include "WinHttpErrors.h"
 
@@ -54,7 +55,8 @@ bool IsCancellationError(DWORD error) {
     return error == ERROR_WINHTTP_OPERATION_CANCELLED || error == ERROR_OPERATION_ABORTED;
 }
 
-void ThrowIfCancelledOr(const char* operation) {
+[[noreturn]] void ThrowWinHttpFailure(const char* operation) {
+    // Read the error before any handle is closed: WinHttpCloseHandle overwrites it.
     const DWORD error = GetLastError();
     if (IsCancellationError(error)) {
         throw std::runtime_error("Translation aborted.");
@@ -329,6 +331,11 @@ std::string BuildRequestBody(const TranslateRequest& request) {
     if (request.temperature >= 0.0) {
         body += "\"temperature\":" + FormatJsonNumber(request.temperature) + ",";
     }
+    if (request.stream) {
+        // Streamed replies start sending bytes immediately, so a slow model cannot
+        // trip a gateway timeout while it is still generating.
+        body += "\"stream\":true,";
+    }
     if (!body.empty() && body.back() == ',') {
         body.pop_back();
     }
@@ -456,35 +463,7 @@ bool ParseBaseUrl(const std::wstring& baseUrl, LlmProtocol protocol, ParsedUrl& 
 }
 
 std::wstring ExtractContentParts(const JsonValue* content) {
-    if (content == nullptr) {
-        return L"";
-    }
-    if (content->IsString()) {
-        return Utf8ToWide(content->text);
-    }
-    if (!content->IsArray()) {
-        return L"";
-    }
-
-    std::wstring text;
-    for (const JsonValue& part : content->elements) {
-        if (part.IsString()) {
-            text += Utf8ToWide(part.text);
-            continue;
-        }
-        if (!part.IsObject()) {
-            continue;
-        }
-        if (const JsonValue* type = part.Find("type"); type != nullptr && type->IsString()) {
-            if (type->text != "text" && type->text != "output_text") {
-                continue;
-            }
-        }
-        if (const JsonValue* value = part.Find("text"); value != nullptr && value->IsString()) {
-            text += Utf8ToWide(value->text);
-        }
-    }
-    return text;
+    return Utf8ToWide(sse::ContentPartsText(content));
 }
 
 std::wstring ExtractOpenAiChatText(const JsonValue& root) {
@@ -637,6 +616,151 @@ std::wstring DescribeFailure(const JsonValue* root, DWORD statusCode, const std:
     return message;
 }
 
+// Owns the WinHTTP handles of one request and unregisters them from the global
+// cancellation state, so every early return (including exceptions) cleans up.
+class RequestHandles {
+public:
+    RequestHandles() = default;
+    RequestHandles(const RequestHandles&) = delete;
+    RequestHandles& operator=(const RequestHandles&) = delete;
+
+    ~RequestHandles() {
+        Release();
+    }
+
+    void Publish() {
+        RegisterActiveHandles(session_, connection_, request_);
+    }
+
+    void Release() {
+        CloseOwnedHandle(request_, &ActiveTranslationState::request);
+        CloseOwnedHandle(connection_, &ActiveTranslationState::connection);
+        CloseOwnedHandle(session_, &ActiveTranslationState::session);
+        request_ = nullptr;
+        connection_ = nullptr;
+        session_ = nullptr;
+    }
+
+    void setSession(HINTERNET handle) { session_ = handle; }
+    void setConnection(HINTERNET handle) { connection_ = handle; }
+    void setRequest(HINTERNET handle) { request_ = handle; }
+
+private:
+    HINTERNET session_ = nullptr;
+    HINTERNET connection_ = nullptr;
+    HINTERNET request_ = nullptr;
+};
+
+struct RawResponse {
+    std::string body;
+    DWORD statusCode = 0;
+};
+
+void ReadResponseBody(HINTERNET requestHandle, RawResponse& response) {
+    DWORD available = 0;
+    do {
+        if (!WinHttpQueryDataAvailable(requestHandle, &available)) {
+            ThrowWinHttpFailure("WinHttpQueryDataAvailable");
+        }
+        if (available == 0) {
+            break;
+        }
+
+        std::string chunk(available, '\0');
+        DWORD downloaded = 0;
+        if (!WinHttpReadData(requestHandle, chunk.data(), available, &downloaded)) {
+            ThrowWinHttpFailure("WinHttpReadData");
+        }
+        chunk.resize(downloaded);
+        response.body += chunk;
+    } while (available > 0);
+}
+
+bool QueryStatusCode(HINTERNET requestHandle, DWORD& statusCode) {
+    DWORD size = sizeof(statusCode);
+    return WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
+               WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &size, WINHTTP_NO_HEADER_INDEX) != FALSE;
+}
+
+bool ResponseIsEventStream(HINTERNET requestHandle) {
+    DWORD size = 0;
+    if (WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
+            nullptr, &size, WINHTTP_NO_HEADER_INDEX) != FALSE) {
+        return false;
+    }
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || size == 0) {
+        return false;
+    }
+
+    std::vector<wchar_t> buffer(size / sizeof(wchar_t) + 1, L'\0');
+    if (!WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_CONTENT_TYPE, WINHTTP_HEADER_NAME_BY_INDEX,
+            buffer.data(), &size, WINHTTP_NO_HEADER_INDEX)) {
+        return false;
+    }
+    const std::wstring contentType = LowercaseAscii(buffer.data());
+    return contentType.find(L"text/event-stream") != std::wstring::npos;
+}
+
+// Reads a streamed reply and concatenates the text deltas. Returns an empty string
+// when the provider ignored `stream` and answered with a regular JSON document.
+std::wstring ReadTranslationStream(HINTERNET requestHandle, LlmProtocol protocol) {
+    sse::Parser parser;
+    std::wstring text;
+    std::string fallback;
+
+    auto consume = [&](bool finished) {
+        for (const std::string& payload : parser.TakeEvents()) {
+            if (sse::IsStreamEnd(payload)) {
+                return true;
+            }
+            const sse::StreamPayload delta = sse::Interpret(protocol, payload);
+            if (!delta.error.empty()) {
+                throw ApiError(delta.error, 400);
+            }
+            if (!delta.textDelta.empty()) {
+                text += Utf8ToWide(delta.textDelta);
+            }
+            if (finished && !delta.fallbackText.empty()) {
+                fallback = delta.fallbackText;
+            }
+        }
+        return false;
+    };
+
+    DWORD available = 0;
+    bool streamEnded = false;
+    do {
+        if (!WinHttpQueryDataAvailable(requestHandle, &available)) {
+            ThrowWinHttpFailure("WinHttpQueryDataAvailable");
+        }
+        if (available == 0) {
+            break;
+        }
+
+        std::string chunk(available, '\0');
+        DWORD downloaded = 0;
+        if (!WinHttpReadData(requestHandle, chunk.data(), available, &downloaded)) {
+            ThrowWinHttpFailure("WinHttpReadData");
+        }
+        chunk.resize(downloaded);
+        parser.Feed(chunk);
+        if (consume(false)) {
+            streamEnded = true;
+            break;
+        }
+    } while (available > 0);
+
+    if (!streamEnded) {
+        parser.Finish();
+        consume(true);
+    }
+
+    if (text.empty() && !fallback.empty()) {
+        text = Utf8ToWide(fallback);
+    }
+    return text;
+}
+
 std::wstring SendTranslationRequest(const TranslateRequest& request) {
     ParsedUrl parsed;
     if (!ParseBaseUrl(request.baseUrl, request.protocol, parsed)) {
@@ -645,12 +769,14 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
 
     const std::string body = BuildRequestBody(request);
 
+    RequestHandles handles;
     HINTERNET session = WinHttpOpen(L"tslt/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY,
         WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (session == nullptr) {
         throw std::runtime_error("WinHttpOpen failed.");
     }
-    RegisterActiveHandles(session, nullptr, nullptr);
+    handles.setSession(session);
+    handles.Publish();
 
     // WinHTTP's default timeouts are 30s for send/receive. Reasoning models (and
     // long chunks) routinely need longer before the first byte arrives, and the
@@ -660,107 +786,96 @@ std::wstring SendTranslationRequest(const TranslateRequest& request) {
 
     HINTERNET connection = WinHttpConnect(session, parsed.host.c_str(), parsed.port, 0);
     if (connection == nullptr) {
-        CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpConnect");
+        ThrowWinHttpFailure("WinHttpConnect");
     }
-    RegisterActiveHandles(session, connection, nullptr);
+    handles.setConnection(connection);
+    handles.Publish();
 
     const DWORD flags = parsed.secure ? WINHTTP_FLAG_SECURE : 0;
     HINTERNET requestHandle = WinHttpOpenRequest(connection, L"POST", parsed.path.c_str(),
         nullptr, WINHTTP_NO_REFERER, WINHTTP_DEFAULT_ACCEPT_TYPES, flags);
     if (requestHandle == nullptr) {
-        CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-        CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpOpenRequest");
+        ThrowWinHttpFailure("WinHttpOpenRequest");
     }
-    RegisterActiveHandles(session, connection, requestHandle);
+    handles.setRequest(requestHandle);
+    handles.Publish();
 
-    std::wstring headers = BuildRequestHeaders(request);
+    const std::wstring headers = BuildRequestHeaders(request);
 
     const BOOL sent = WinHttpSendRequest(requestHandle, headers.c_str(), static_cast<DWORD>(headers.size()),
         reinterpret_cast<LPVOID>(const_cast<char*>(body.data())), static_cast<DWORD>(body.size()),
         static_cast<DWORD>(body.size()), 0);
     if (!sent) {
-        CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
-        CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-        CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpSendRequest");
+        ThrowWinHttpFailure("WinHttpSendRequest");
     }
 
     if (!WinHttpReceiveResponse(requestHandle, nullptr)) {
-        CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
-        CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-        CloseOwnedHandle(session, &ActiveTranslationState::session);
-        ThrowIfCancelledOr("WinHttpReceiveResponse");
+        ThrowWinHttpFailure("WinHttpReceiveResponse");
     }
-
-    std::string response;
-    DWORD available = 0;
-    do {
-        if (!WinHttpQueryDataAvailable(requestHandle, &available)) {
-            CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
-            CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-            CloseOwnedHandle(session, &ActiveTranslationState::session);
-            ThrowIfCancelledOr("WinHttpQueryDataAvailable");
-        }
-        if (available == 0) {
-            break;
-        }
-
-        std::string chunk(available, '\0');
-        DWORD downloaded = 0;
-        if (!WinHttpReadData(requestHandle, chunk.data(), available, &downloaded)) {
-            CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
-            CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-            CloseOwnedHandle(session, &ActiveTranslationState::session);
-            ThrowIfCancelledOr("WinHttpReadData");
-        }
-        chunk.resize(downloaded);
-        response += chunk;
-    } while (available > 0);
 
     DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    if (!WinHttpQueryHeaders(requestHandle, WINHTTP_QUERY_STATUS_CODE | WINHTTP_QUERY_FLAG_NUMBER,
-            WINHTTP_HEADER_NAME_BY_INDEX, &statusCode, &statusCodeSize, WINHTTP_NO_HEADER_INDEX)) {
-        statusCode = 0;
+    QueryStatusCode(requestHandle, statusCode);
+
+    // Only read a stream when the server actually answered with one; a provider that
+    // ignores `stream` returns plain JSON that the regular parser handles.
+    if (statusCode < 400 && request.stream && ResponseIsEventStream(requestHandle)) {
+        std::wstring streamed = ReadTranslationStream(requestHandle, request.protocol);
+        handles.Release();
+        if (!TrimCopy(streamed).empty()) {
+            return streamed;
+        }
+        throw ApiError("Translation response did not contain content.", static_cast<int>(statusCode));
     }
 
-    CloseOwnedHandle(requestHandle, &ActiveTranslationState::request);
-    CloseOwnedHandle(connection, &ActiveTranslationState::connection);
-    CloseOwnedHandle(session, &ActiveTranslationState::session);
+    RawResponse raw;
+    raw.statusCode = statusCode;
+    ReadResponseBody(requestHandle, raw);
+    handles.Release();
 
     JsonValue root;
-    const JsonValue* document = ParseJsonDocument(response, root) ? &root : nullptr;
+    const JsonValue* document = ParseJsonDocument(raw.body, root) ? &root : nullptr;
 
     std::wstring content = document != nullptr ? ExtractTranslationText(request, *document) : L"";
     if (content.empty()) {
-        const std::wstring message = DescribeFailure(document, statusCode, response);
-        throw ApiError(WideToUtf8(message), static_cast<int>(statusCode));
+        const std::wstring message = DescribeFailure(document, raw.statusCode, raw.body);
+        throw ApiError(WideToUtf8(message), static_cast<int>(raw.statusCode));
     }
 
     return content;
 }
 
-// Some models reject a non-default temperature (Claude Haiku 5.5, OpenAI reasoning
-// models). Retry once without the field instead of failing the translation, and
-// remember that for the remaining chunks.
-std::wstring SendTranslationWithTemperatureFallback(TranslateRequest request, bool& temperatureOmitted) {
-    if (temperatureOmitted) {
-        request.temperature = -1.0;
-    }
 
-    try {
-        return SendTranslationRequest(request);
-    } catch (const ApiError& error) {
-        if (temperatureOmitted || !api_hints::ShouldRetryWithoutTemperature(error.statusCode(), error.what())) {
+// Applies the request-shape fallbacks and remembers them for the remaining chunks:
+//  - some models reject a non-default temperature (Claude Haiku 5.5, OpenAI reasoning
+//    models), so the field is dropped;
+//  - some gateways reject or ignore streaming, so the request is sent non-streamed.
+std::wstring SendTranslationWithFallbacks(TranslateRequest request, bool& temperatureOmitted,
+    bool& streamingDisabled) {
+    request.temperature = temperatureOmitted ? -1.0 : request.temperature;
+    request.stream = request.stream && !streamingDisabled;
+
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        try {
+            return SendTranslationRequest(request);
+        } catch (const ApiError& error) {
+            const int status = error.statusCode();
+            if (!streamingDisabled && request.stream &&
+                api_hints::ShouldRetryWithoutStreaming(status, error.what())) {
+                streamingDisabled = true;
+                request.stream = false;
+                continue;
+            }
+            if (!temperatureOmitted &&
+                api_hints::ShouldRetryWithoutTemperature(status, error.what())) {
+                temperatureOmitted = true;
+                request.temperature = -1.0;
+                continue;
+            }
             throw;
         }
     }
 
-    temperatureOmitted = true;
-    request.temperature = -1.0;
-    return SendTranslationRequest(request);
+    throw std::runtime_error("Translation request failed after applying fallbacks.");
 }
 
 void PostError(HWND owner, const std::wstring& message) {
@@ -770,10 +885,11 @@ void PostError(HWND owner, const std::wstring& message) {
     }
 }
 
-std::wstring TranslateWithChunking(const TranslateRequest& request, bool& temperatureOmitted) {
+std::wstring TranslateWithChunking(const TranslateRequest& request, bool& temperatureOmitted,
+    bool& streamingDisabled) {
     const std::vector<std::wstring> chunks = BuildTranslationChunks(request.inputText);
     if (chunks.size() == 1) {
-        return SendTranslationWithTemperatureFallback(request, temperatureOmitted);
+        return SendTranslationWithFallbacks(request, temperatureOmitted, streamingDisabled);
     }
 
     std::wstring combined;
@@ -785,7 +901,7 @@ std::wstring TranslateWithChunking(const TranslateRequest& request, bool& temper
             throw std::runtime_error("Translation aborted.");
         }
         chunkRequest.inputText = chunk;
-        combined += SendTranslationWithTemperatureFallback(chunkRequest, temperatureOmitted);
+        combined += SendTranslationWithFallbacks(chunkRequest, temperatureOmitted, streamingDisabled);
     }
 
     return combined;
@@ -811,7 +927,8 @@ void StartTranslateWorker(TranslateRequest request) {
             }
 
             bool temperatureOmitted = false;
-            const std::wstring translated = TranslateWithChunking(request, temperatureOmitted);
+            bool streamingDisabled = false;
+            const std::wstring translated = TranslateWithChunking(request, temperatureOmitted, streamingDisabled);
             auto* result = new TranslateResult{TrimLeadingLineBreaks(translated), temperatureOmitted};
             EndActiveTranslation();
             if (!PostMessageW(request.ownerHwnd, WM_APP_TRANSLATE_DONE, 0, reinterpret_cast<LPARAM>(result))) {

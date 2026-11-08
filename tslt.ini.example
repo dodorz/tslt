@@ -15,6 +15,10 @@ model = deepseek-v4-flash
 # WinHTTP send/receive timeout in seconds (default 300). Raise it for slow
 # reasoning models, lower it for fast local servers.
 # timeout = 300
+# Streaming is on by default; non-streamed replies only start after the whole
+# answer is generated, which trips reverse-proxy timeouts on long inputs.
+# Set to 0 only for gateways that reject "stream".
+# stream = 1
 
 [LLM.GPT]
 name = OpenAI GPT (Responses API)

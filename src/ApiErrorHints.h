@@ -53,6 +53,39 @@ inline bool RejectsTemperature(const std::string& errorMessage) {
     return false;
 }
 
+// Some OpenAI-compatible gateways reject the "stream" field (or only support
+// non-streamed replies). Detecting that lets tslt fall back instead of failing.
+inline bool RejectsStreaming(const std::string& errorMessage) {
+    if (errorMessage.empty() || !ContainsInsensitive(errorMessage, "stream")) {
+        return false;
+    }
+
+    const char* const unsupportedPhrases[] = {
+        "not support",
+        "does not support",
+        "doesn't support",
+        "unsupported",
+        "not allowed",
+        "invalid",
+        "unknown field",
+        "unrecognized",
+    };
+
+    for (const char* phrase : unsupportedPhrases) {
+        if (ContainsInsensitive(errorMessage, phrase)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+inline bool ShouldRetryWithoutStreaming(int statusCode, const std::string& errorMessage) {
+    if (statusCode < 400 || statusCode >= 500) {
+        return false;
+    }
+    return RejectsStreaming(errorMessage);
+}
+
 // Short hint for gateway/server status codes; used when the body is empty or HTML.
 // Returns an empty string for statuses without a specific meaning.
 inline const char* DescribeHttpStatus(int statusCode) {

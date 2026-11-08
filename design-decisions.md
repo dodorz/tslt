@@ -102,6 +102,18 @@ max_tokens = 8192
 - provider 节可覆盖 `[Translate].temperature`；取负值时请求体不包含 `temperature`（推理模型如 `gpt-5` 不接受该字段）
 - `max_tokens` 缺省 `8192`，最小 `1`；Anthropic 作为 `max_tokens` 发送，Responses 协议作为 `max_output_tokens` 发送；OpenAI chat completions 不发送该字段，沿用服务端默认值（新推理模型只接受 `max_completion_tokens`）
 
+流式响应：
+
+- 缺省 `stream = 1`，请求体带 `stream: true`，逐段读取 SSE 并本地拼接译文
+- 非流式响应要等整段生成完才开始发送字节，长输入会触发反向代理超时（Cloudflare 约 100 秒后返回 524），即使模型最终能完成
+- 网关拒绝 `stream` 时自动降级为非流式重试，并对同一输入的后续分块保持该选择
+- SSE 解析与三种协议的增量提取集中在 `src/SseStream.h`：
+  - OpenAI chat completions：`choices[0].delta.content`（忽略 `delta.reasoning`）
+  - OpenAI Responses：`response.output_text.delta`，终止事件 `response.completed` 里的完整 output 作为兜底
+  - Anthropic：`content_block_delta` 的 `text_delta`（忽略 `thinking_delta`），终止事件 `message_stop`
+- 服务端忽略 `stream` 而直接返回 JSON 时，按普通响应解析
+- 只有 `Content-Type: text/event-stream` 时才走流式解析
+
 网络超时：
 
 - WinHTTP 缺省 send/receive 超时为 30 秒，推理模型在首个字节前常需更久，会产生 `WinHttpReceiveResponse failed.`
@@ -413,6 +425,8 @@ struct TranslateRequest {
     LlmProtocol protocol;
     LlmAuthStyle authStyle;
     int maxTokens;
+    int timeoutSeconds;
+    bool stream;
     std::wstring sourceLanguage;
     std::wstring targetLanguage;
     double temperature;
@@ -421,6 +435,7 @@ struct TranslateRequest {
 
 struct TranslateResult {
     std::wstring translatedText;
+    bool temperatureOmitted;
 };
 
 struct TranslateError {

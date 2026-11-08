@@ -32,11 +32,11 @@ Output:
 
 ### Tests
 
-`src/Json.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h` and `src/WinHttpErrors.h` are platform independent, so they have portable unit tests:
+`src/Json.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h`, `src/WinHttpErrors.h` and `src/SseStream.h` are platform independent, so they have portable unit tests:
 
 ```bash
 cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
-cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests tslt_api_hints_tests tslt_winhttp_errors_tests
+cmake --build build/tests --target tslt_json_protocol_tests tslt_config_keys_tests tslt_api_hints_tests tslt_winhttp_errors_tests tslt_sse_tests
 ctest --test-dir build/tests --output-on-failure
 ```
 
@@ -94,6 +94,7 @@ Rules:
   - `responses` - `POST <base_url>/responses` with `Authorization: Bearer`, body has `instructions` + `input` + `max_output_tokens`.
   - `anthropic` - `POST <base_url>/v1/messages` with `x-api-key` and `anthropic-version: 2023-06-01`, body has `system` + `messages` + `max_tokens`.
   - Unknown values fall back to `openai`; `openai-chat-completions`, `openai-responses`, `anthropic-messages`, `claude` are accepted aliases.
+- `stream` defaults to `1`. Responses are requested with `stream: true` and the SSE deltas are assembled locally; set `stream = 0` for gateways that reject or do not support streaming. Streaming matters because a non-streamed reply only starts sending bytes after the whole answer is generated, so long inputs hit reverse-proxy timeouts (Cloudflare answers HTTP 524 after ~100s) even when the model would eventually finish. If a gateway rejects `stream`, tslt retries without it and remembers that for the remaining chunks.
 - `timeout` is the send/receive timeout in seconds (default `300`, clamped to `10`-`3600`). WinHTTP's own default is 30 seconds, which is too short for reasoning models that emit reasoning tokens before the first output byte; raise it for slow models and lower it for fast local servers.
 - `max_tokens` defaults to `8192` and is sent as `max_tokens` (Anthropic) or `max_output_tokens` (Responses API); the OpenAI chat-completions body leaves the limit to the server default.
 - `base_url` normally already contains the version prefix (`https://api.openai.com/v1`, `https://api.siliconflow.cn/v1`). A `base_url` that already points at the final endpoint (for example `https://api.openai.com/v1/responses`) is used as-is. For `protocol = anthropic`, both `https://api.anthropic.com` and `https://api.anthropic.com/v1` work.

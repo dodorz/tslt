@@ -17,6 +17,9 @@ struct TranslateRequest {
     // Receive/send timeout in seconds. Reasoning models can take minutes before the
     // first byte, and the WinHTTP default (30s) times those requests out.
     int timeoutSeconds = 300;
+    // Ask for a streamed response. Non-streaming replies only start sending bytes once
+    // the whole answer is generated, which trips gateway timeouts on long inputs.
+    bool stream = true;
     std::wstring systemPrompt;
     std::wstring sourceLanguage;
     std::wstring targetLanguage;

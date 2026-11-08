@@ -19,6 +19,8 @@ struct LlmProviderConfig {
     // Send/receive timeout in seconds; WinHTTP defaults to 30s, which is too short for
     // models that produce reasoning tokens before the first output byte.
     int timeoutSeconds = 300;
+    // Stream the response (default on) so long generations do not hit gateway timeouts.
+    bool stream = true;
     bool hasTemperature = false;
     double temperature = 0.2;
 };

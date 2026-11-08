@@ -780,6 +780,7 @@ void MainWindow::OnTranslateClicked() {
     request.authStyle = provider.authStyle;
     request.maxTokens = provider.maxTokens;
     request.timeoutSeconds = provider.timeoutSeconds;
+    request.stream = provider.stream;
     request.systemPrompt = systemPromptOverride_;
     request.sourceLanguage = config_.translate.sourceLanguage;
     request.targetLanguage = config_.translate.targetLanguage;

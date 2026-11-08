@@ -16,6 +16,22 @@ void Check(bool condition, const std::string& message) {
     }
 }
 
+void TestRejectsStreaming() {
+    Check(api_hints::RejectsStreaming("unknown field: stream"), "unknown stream field is detected");
+    Check(api_hints::RejectsStreaming("stream is not supported for this model"), "not supported phrasing");
+    Check(api_hints::RejectsStreaming("Unsupported parameter: 'stream'"), "unsupported parameter phrasing");
+    Check(api_hints::RejectsStreaming("invalid value for stream"), "invalid value phrasing");
+
+    Check(!api_hints::RejectsStreaming(""), "empty message is not a streaming rejection");
+    Check(!api_hints::RejectsStreaming("rate limited"), "unrelated error is not a streaming rejection");
+    Check(!api_hints::ShouldRetryWithoutStreaming(500, "stream is not supported"),
+        "streaming rejection on 5xx is not retried");
+    Check(!api_hints::ShouldRetryWithoutStreaming(400, "invalid api key"),
+        "auth errors are not retried for streaming");
+    Check(api_hints::ShouldRetryWithoutStreaming(400, "unknown field: stream"),
+        "4xx streaming rejection is retried");
+}
+
 void TestHttpStatusHints() {
     Check(std::string(api_hints::DescribeHttpStatus(502)) == "bad gateway", "502 hint");
     Check(std::string(api_hints::DescribeHttpStatus(503)) == "service unavailable", "503 hint");
@@ -61,6 +77,7 @@ void TestRejectsTemperature() {
 int main() {
     TestRejectsTemperature();
     TestHttpStatusHints();
+    TestRejectsStreaming();
 
     if (g_failures != 0) {
         std::cerr << g_failures << " check(s) failed\n";

@@ -208,6 +208,7 @@ AppConfig ConfigStore::Load() {
 
         provider.maxTokens = std::max(1, ReadInt(config.loadedPath, sectionName, L"max_tokens", 8192));
         provider.timeoutSeconds = std::clamp(ReadInt(config.loadedPath, sectionName, L"timeout", 300), 10, 3600);
+        provider.stream = ReadInt(config.loadedPath, sectionName, L"stream", 1) != 0;
 
         // Optional per-provider override; a negative value omits temperature from the
         // request body, which reasoning-only models (for example gpt-5) require.
