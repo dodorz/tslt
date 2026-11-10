@@ -11,6 +11,7 @@
 
 #include "Messages.h"
 #include "StringUtils.h"
+#include "WinHttpErrors.h"
 
 namespace {
 
@@ -19,9 +20,24 @@ struct ActiveLookupState {
     HINTERNET session = nullptr;
     HINTERNET connection = nullptr;
     HINTERNET request = nullptr;
+    bool cancelRequested = false;
 };
 
 ActiveLookupState g_activeLookup;
+
+bool IsCancellationError(DWORD error) {
+    return error == ERROR_WINHTTP_OPERATION_CANCELLED || error == ERROR_OPERATION_ABORTED;
+}
+
+// Aborting closes the handles under the worker thread's feet, so the failure has to be
+// reported as a cancellation rather than as a generic WinHTTP error.
+[[noreturn]] void ThrowIfCancelledOr(const char* operation) {
+    const DWORD error = GetLastError();
+    if (IsCancellationError(error)) {
+        throw std::runtime_error(WideToUtf8(kDictionaryLookupAborted));
+    }
+    throw std::runtime_error(winhttp_errors::DescribeFailure(operation, static_cast<long>(error)));
+}
 
 void RegisterActiveHandles(HINTERNET session, HINTERNET connection, HINTERNET request) {
     std::lock_guard<std::mutex> lock(g_activeLookup.mutex);
@@ -35,6 +51,7 @@ void BeginActiveLookup() {
     g_activeLookup.session = nullptr;
     g_activeLookup.connection = nullptr;
     g_activeLookup.request = nullptr;
+    g_activeLookup.cancelRequested = false;
 }
 
 void EndActiveLookup() {
@@ -42,6 +59,12 @@ void EndActiveLookup() {
     g_activeLookup.session = nullptr;
     g_activeLookup.connection = nullptr;
     g_activeLookup.request = nullptr;
+    g_activeLookup.cancelRequested = false;
+}
+
+bool IsLookupCancelled() {
+    std::lock_guard<std::mutex> lock(g_activeLookup.mutex);
+    return g_activeLookup.cancelRequested;
 }
 
 void CloseOwnedHandle(HINTERNET handle, HINTERNET ActiveLookupState::* member) {
@@ -108,7 +131,7 @@ std::wstring FetchUrl(const std::wstring& url) {
     HINTERNET connection = WinHttpConnect(session, hostStr.c_str(), port, 0);
     if (connection == nullptr) {
         CloseOwnedHandle(session, &ActiveLookupState::session);
-        throw std::runtime_error("WinHttpConnect failed.");
+        ThrowIfCancelledOr("WinHttpConnect");
     }
     RegisterActiveHandles(session, connection, nullptr);
 
@@ -118,7 +141,7 @@ std::wstring FetchUrl(const std::wstring& url) {
     if (requestHandle == nullptr) {
         CloseOwnedHandle(connection, &ActiveLookupState::connection);
         CloseOwnedHandle(session, &ActiveLookupState::session);
-        throw std::runtime_error("WinHttpOpenRequest failed.");
+        ThrowIfCancelledOr("WinHttpOpenRequest");
     }
     RegisterActiveHandles(session, connection, requestHandle);
 
@@ -127,14 +150,14 @@ std::wstring FetchUrl(const std::wstring& url) {
         CloseOwnedHandle(requestHandle, &ActiveLookupState::request);
         CloseOwnedHandle(connection, &ActiveLookupState::connection);
         CloseOwnedHandle(session, &ActiveLookupState::session);
-        throw std::runtime_error("WinHttpSendRequest failed.");
+        ThrowIfCancelledOr("WinHttpSendRequest");
     }
 
     if (!WinHttpReceiveResponse(requestHandle, nullptr)) {
         CloseOwnedHandle(requestHandle, &ActiveLookupState::request);
         CloseOwnedHandle(connection, &ActiveLookupState::connection);
         CloseOwnedHandle(session, &ActiveLookupState::session);
-        throw std::runtime_error("WinHttpReceiveResponse failed.");
+        ThrowIfCancelledOr("WinHttpReceiveResponse");
     }
 
     std::string response;
@@ -144,7 +167,7 @@ std::wstring FetchUrl(const std::wstring& url) {
             CloseOwnedHandle(requestHandle, &ActiveLookupState::request);
             CloseOwnedHandle(connection, &ActiveLookupState::connection);
             CloseOwnedHandle(session, &ActiveLookupState::session);
-            throw std::runtime_error("WinHttpQueryDataAvailable failed.");
+            ThrowIfCancelledOr("WinHttpQueryDataAvailable");
         }
         if (available == 0) {
             break;
@@ -155,7 +178,7 @@ std::wstring FetchUrl(const std::wstring& url) {
             CloseOwnedHandle(requestHandle, &ActiveLookupState::request);
             CloseOwnedHandle(connection, &ActiveLookupState::connection);
             CloseOwnedHandle(session, &ActiveLookupState::session);
-            throw std::runtime_error("WinHttpReadData failed.");
+            ThrowIfCancelledOr("WinHttpReadData");
         }
         chunk.resize(downloaded);
         response += chunk;
@@ -165,6 +188,10 @@ std::wstring FetchUrl(const std::wstring& url) {
     CloseOwnedHandle(connection, &ActiveLookupState::connection);
     CloseOwnedHandle(session, &ActiveLookupState::session);
 
+    // A request that finished between the abort and this point must not be delivered.
+    if (IsLookupCancelled()) {
+        throw std::runtime_error(WideToUtf8(kDictionaryLookupAborted));
+    }
     return Utf8ToWide(response);
 }
 
@@ -441,9 +468,13 @@ void PostResult(HWND owner, DictionaryLookupResult* result) {
 }
 
 void StartDictionaryLookupWorker(DictionaryLookupRequest request) {
+    // Reset the cancellation state on the calling (UI) thread, before the worker
+    // starts. Doing it inside the thread would let an immediate Abort be cleared again
+    // by the worker, silently losing the cancellation.
+    BeginActiveLookup();
+
     std::thread([request = std::move(request)]() mutable {
         try {
-            BeginActiveLookup();
             if (request.word.empty()) {
                 PostError(request.ownerHwnd, L"Input text is empty.");
                 EndActiveLookup();
@@ -468,14 +499,51 @@ void StartDictionaryLookupWorker(DictionaryLookupRequest request) {
                 return;
             }
 
+            const bool cancelled = IsLookupCancelled();
             EndActiveLookup();
+            if (cancelled) {
+                delete result;
+                PostError(request.ownerHwnd, kDictionaryLookupAborted);
+                return;
+            }
             PostResult(request.ownerHwnd, result);
         } catch (const std::exception& ex) {
+            const bool cancelled = IsLookupCancelled();
             EndActiveLookup();
-            PostError(request.ownerHwnd, Utf8ToWide(ex.what()));
+            const std::wstring message = Utf8ToWide(ex.what());
+            // An abort already closed the handles; keep the cancellation message so
+            // MainWindow can skip the translate fallback.
+            PostError(request.ownerHwnd, cancelled ? std::wstring(kDictionaryLookupAborted) : message);
         } catch (...) {
             EndActiveLookup();
             PostError(request.ownerHwnd, L"Unexpected dictionary lookup error.");
         }
     }).detach();
+}
+
+void AbortActiveDictionaryLookup() {
+    HINTERNET request = nullptr;
+    HINTERNET connection = nullptr;
+    HINTERNET session = nullptr;
+
+    {
+        std::lock_guard<std::mutex> lock(g_activeLookup.mutex);
+        g_activeLookup.cancelRequested = true;
+        request = g_activeLookup.request;
+        connection = g_activeLookup.connection;
+        session = g_activeLookup.session;
+        g_activeLookup.request = nullptr;
+        g_activeLookup.connection = nullptr;
+        g_activeLookup.session = nullptr;
+    }
+
+    if (request != nullptr) {
+        WinHttpCloseHandle(request);
+    }
+    if (connection != nullptr) {
+        WinHttpCloseHandle(connection);
+    }
+    if (session != nullptr) {
+        WinHttpCloseHandle(session);
+    }
 }

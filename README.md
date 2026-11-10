@@ -114,7 +114,7 @@ Rules:
   - English phrase/idiom: up to `max_phrase_words` (default `6`) and `max_phrase_chars` (default `35`);
   - unspaced CJK run: up to `max_cjk_chars` (default `8`), since Chinese has no word separators;
   - anything longer, spaced or sentence-like goes straight to the LLM.
-  Trailing and wrapping punctuation is stripped before the lookup (`apple.`, `苹果。` and `"apple"` all miss otherwise). If the dictionary returns no definition or the request fails, the input is translated by the configured LLM instead, so a miss never leaves an empty result. The legacy `auto_select_max_characters` key still works and keeps the old "single word, that many characters" rule.
+  Trailing and wrapping punctuation is stripped before the lookup (`apple.`, `苹果。` and `"apple"` all miss otherwise). If the dictionary returns no definition or the request fails, the input is translated by the configured LLM instead, so a miss never leaves an empty result. Cancelling a lookup with the Translate/Abort button aborts the dictionary request too and does not trigger that fallback. The legacy `auto_select_max_characters` key still works and keeps the old "single word, that many characters" rule.
 - Runtime window state is never written into `tslt.ini`.
 
 ## Release

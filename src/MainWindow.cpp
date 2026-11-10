@@ -701,6 +701,7 @@ void MainWindow::OnCommand(int controlId, int notifyCode, HWND) {
 void MainWindow::OnClose() {
     if (isTranslating_) {
         AbortActiveTranslation();
+        AbortActiveDictionaryLookup();
     }
     UpdateWindowState();
     ConfigStore(appName_).SaveWindowState(windowState_);
@@ -723,7 +724,10 @@ void MainWindow::OnTranslateClicked() {
     SetFocus(outputEdit_);
     lastEscapeTick_ = 0;
     if (isTranslating_) {
+        // Either side may be in flight: the model request, the dictionary lookup, or
+        // the dictionary fallback that switched back to the model.
         AbortActiveTranslation();
+        AbortActiveDictionaryLookup();
         SetTranslating(true, L"Aborting...");
         return;
     }
@@ -979,6 +983,14 @@ void MainWindow::OnDictLookupError(DictionaryLookupError* error) {
     if (error != nullptr) {
         lookupError = error->message;
         delete error;
+    }
+
+    // A user abort is not a lookup failure: translating the same text would look like
+    // the abort did nothing at all.
+    if (lookupError == kDictionaryLookupAborted) {
+        SetOutputText(L"");
+        SetTranslating(false, L"Dictionary lookup aborted.");
+        return;
     }
 
     // A lookup can also fail because dict.cn is unreachable; falling back to the

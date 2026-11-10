@@ -23,6 +23,11 @@ struct DictionaryLookupError {
     std::wstring message;
 };
 
+// Error text used when the user aborts a lookup. MainWindow matches on it to skip the
+// translate fallback, so the two sides must not drift apart.
+inline constexpr wchar_t kDictionaryLookupAborted[] = L"Dictionary lookup aborted.";
+
 void StartDictionaryLookupWorker(DictionaryLookupRequest request);
+void AbortActiveDictionaryLookup();
 
 #endif
