@@ -37,6 +37,7 @@ private:
     void OnTranslateError(struct TranslateError* error);
     void OnDictLookupDone(struct DictionaryLookupResult* result);
     void OnDictLookupError(struct DictionaryLookupError* error);
+    bool StartFallbackTranslation(const std::wstring& sourceText);
     void LayoutControls(int clientWidth, int clientHeight);
     void SetTranslating(bool translating, const std::wstring& statusText = L"");
     std::wstring BuildReadyStatusText() const;
@@ -78,6 +79,9 @@ private:
     bool isTranslating_ = false;
     DWORD lastEscapeTick_ = 0;
     std::wstring systemPromptOverride_;
+    // Input awaiting a dictionary result, kept in case the lookup misses and the text
+    // must be translated by the model instead.
+    std::wstring pendingDictionaryText_;
 };
 
 #endif

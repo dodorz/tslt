@@ -50,4 +50,21 @@ temperature = 0.2
 
 [Dictionary]
 provider = dict.cn
-auto_select_max_characters = 20
+
+# When the input is a plausible dictionary headword, tslt asks the dictionary before
+# the language model; anything else goes straight to the model. Thresholds were probed
+# against dict.cn: single English words resolve up to ~45 chars, English idioms up to
+# about 6 words / 35 chars, Chinese entries up to ~8 chars. Trailing punctuation is
+# stripped before the request, and a miss falls back to the model automatically.
+
+# Longest single English word treated as a dictionary lookup.
+# max_english_word_chars = 32
+# Longest multi-word phrase, in words and in characters.
+# max_phrase_words = 6
+# max_phrase_chars = 35
+# Longest unspaced CJK run (Chinese has no word separators).
+# max_cjk_chars = 8
+
+# Legacy key: when present it caps the English word bound and the CJK bound and
+# restricts lookups to a single unspaced term, matching older behaviour.
+# auto_select_max_characters = 20

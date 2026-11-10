@@ -23,7 +23,6 @@ struct DictionaryLookupError {
     std::wstring message;
 };
 
-size_t CountWords(const std::wstring& text);
 void StartDictionaryLookupWorker(DictionaryLookupRequest request);
 
 #endif

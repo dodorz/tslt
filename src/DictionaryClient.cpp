@@ -440,20 +440,6 @@ void PostResult(HWND owner, DictionaryLookupResult* result) {
 
 }
 
-size_t CountWords(const std::wstring& text) {
-    size_t count = 0;
-    bool inWord = false;
-    for (wchar_t ch : text) {
-        if (ch == L' ' || ch == L'\t' || ch == L'\r' || ch == L'\n') {
-            inWord = false;
-        } else if (!inWord) {
-            inWord = true;
-            ++count;
-        }
-    }
-    return count;
-}
-
 void StartDictionaryLookupWorker(DictionaryLookupRequest request) {
     std::thread([request = std::move(request)]() mutable {
         try {

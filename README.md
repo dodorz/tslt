@@ -32,12 +32,12 @@ Output:
 
 ### Tests
 
-`src/Json.h`, `src/IniFile.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h`, `src/WinHttpErrors.h` and `src/SseStream.h` are platform independent, so they have portable unit tests:
+`src/Json.h`, `src/IniFile.h`, `src/LlmProtocol.h`, `src/ConfigKeys.h`, `src/ApiErrorHints.h`, `src/WinHttpErrors.h`, `src/SseStream.h` and `src/DictionaryHeuristic.h` are platform independent, so they have portable unit tests:
 
 ```bash
 cmake -S . -B build/tests -DTSLT_BUILD_TESTS=ON
 cmake --build build/tests --target tslt_json_protocol_tests tslt_ini_tests tslt_config_keys_tests \
-    tslt_api_hints_tests tslt_winhttp_errors_tests tslt_sse_tests
+    tslt_api_hints_tests tslt_winhttp_errors_tests tslt_sse_tests tslt_dictionary_heuristic_tests
 ctest --test-dir build/tests --output-on-failure
 ```
 
@@ -106,7 +106,12 @@ Rules:
 - Responses are parsed structurally (`choices[0].message.content`, `output[].content[].text`, or Anthropic `content[].text`), and API errors are reported from the `error.message` field.
 - `#` starts a comment anywhere on a line, so `model = Qwen/Qwen3-8B   # swap to Qwen3-30B` reads as `Qwen/Qwen3-8B`. A quoted value keeps the `#`, e.g. `name = "Qwen #1"`. `;` still comments out a whole line but is kept inside values, so API keys and URLs containing `;` survive. A duplicate key keeps its first definition.
 - `tslt.ini` is validated while loading. Keys the reader never consumes are reported instead of being silently ignored: the status bar shows the first problem and the output pane lists all of them. Keys are matched case-insensitively with `-`, `_` and spaces ignored, so `api_style`, `apikey` or `max-output-tokens` are flagged with a `did you mean ...` hint (for example `api_style` -> `protocol`). Values that cannot be parsed for `protocol` or `auth` are reported the same way, as are provider sections not spelled exactly `[LLM.<name>]`.
-- A single non-whitespace word of no more than 20 characters selects the configured dictionary; phrases, sentences, and longer unbroken input select the default LLM. Set `[Dictionary] auto_select_max_characters` to adjust the limit.
+- Dictionary selection uses language-aware thresholds (`src/DictionaryHeuristic.h`), probed against dict.cn:
+  - single English word: up to `max_english_word_chars` (default `32`);
+  - English phrase/idiom: up to `max_phrase_words` (default `6`) and `max_phrase_chars` (default `35`);
+  - unspaced CJK run: up to `max_cjk_chars` (default `8`), since Chinese has no word separators;
+  - anything longer, spaced or sentence-like goes straight to the LLM.
+  Trailing and wrapping punctuation is stripped before the lookup (`apple.`, `苹果。` and `"apple"` all miss otherwise). If the dictionary returns no definition or the request fails, the input is translated by the configured LLM instead, so a miss never leaves an empty result. The legacy `auto_select_max_characters` key still works and keeps the old "single word, that many characters" rule.
 - Runtime window state is never written into `tslt.ini`.
 
 ## Release

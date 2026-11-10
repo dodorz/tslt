@@ -303,8 +303,39 @@ AppConfig ConfigStore::Load() {
     } else {
         config.dictionary.provider = DictionaryProvider::None;
     }
-    config.dictionary.autoSelectMaxCharacters = static_cast<size_t>(
-        std::max(1, ReadInt(config.loadedPath, L"Dictionary", L"auto_select_max_characters", 20)));
+    // Limits default to the probed values in DictionaryHeuristic.h. The legacy
+    // auto_select_max_characters key still works: when present it caps the English word
+    // bound and the CJK bound, so an existing tslt.ini keeps its behaviour. The
+    // per-language keys override that individually. Every value is clamped so a typo
+    // cannot make the dictionary unusable or route every sentence to it.
+    dictionary_heuristic::Limits& limits = config.dictionary.limits;
+    constexpr int kUnset = -1;
+    const int legacyMaxCharacters = ReadInt(config.loadedPath, L"Dictionary", L"auto_select_max_characters", kUnset);
+    const auto clampInt = [](int value, int minimum, int maximum, size_t fallback) {
+        if (value == kUnset) {
+            return fallback;
+        }
+        return static_cast<size_t>(std::clamp(value, minimum, maximum));
+    };
+
+    const size_t wordDefault = legacyMaxCharacters == kUnset
+        ? limits.maxSingleWordChars
+        : static_cast<size_t>(std::max(1, legacyMaxCharacters));
+    const size_t cjkDefault = legacyMaxCharacters == kUnset
+        ? limits.maxCjkChars
+        : static_cast<size_t>(std::max(1, legacyMaxCharacters));
+
+    limits.maxSingleWordChars = clampInt(ReadInt(config.loadedPath, L"Dictionary", L"max_english_word_chars", kUnset),
+        1, 200, wordDefault);
+    // With only the legacy key configured, keep the old "single word only" rule; the
+    // per-language keys opt into phrase lookups.
+    const size_t phraseWordsDefault = legacyMaxCharacters == kUnset ? limits.maxPhraseWords : 1;
+    limits.maxPhraseWords = clampInt(ReadInt(config.loadedPath, L"Dictionary", L"max_phrase_words", kUnset),
+        1, 20, phraseWordsDefault);
+    limits.maxPhraseChars = clampInt(ReadInt(config.loadedPath, L"Dictionary", L"max_phrase_chars", kUnset),
+        1, 400, limits.maxPhraseChars);
+    limits.maxCjkChars = clampInt(ReadInt(config.loadedPath, L"Dictionary", L"max_cjk_chars", kUnset),
+        1, 100, cjkDefault);
 
     return config;
 }

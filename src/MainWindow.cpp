@@ -1,7 +1,6 @@
 #include "MainWindow.h"
 
 #include <cstring>
-#include <cwctype>
 #include <commctrl.h>
 #include <shellapi.h>
 #include <string_view>
@@ -14,6 +13,7 @@
 #include "StringUtils.h"
 #include "TranslatorClient.h"
 #include "DictionaryClient.h"
+#include "DictionaryHeuristic.h"
 
 namespace {
 constexpr wchar_t kWindowTitle[] = L"LLM Translator";
@@ -268,16 +268,6 @@ bool IsLanguageCharacter(unsigned int codePoint) {
     return GetStringTypeW(CT_CTYPE1, &character, 1, &characterType) != FALSE && (characterType & C1_ALPHA) != 0;
 }
 
-size_t CountNonWhitespaceCodePoints(const std::wstring& text) {
-    size_t count = 0;
-    for (size_t index = 0; index < text.size();) {
-        const unsigned int codePoint = NextCodePoint(text, index);
-        if (codePoint > 0xFFFF || !iswspace(static_cast<wint_t>(codePoint))) {
-            ++count;
-        }
-    }
-    return count;
-}
 }
 
 MainWindow::MainWindow(HINSTANCE instance, std::wstring appName, AppConfig config, std::wstring statePath, std::wstring initialInputText)
@@ -743,12 +733,17 @@ void MainWindow::OnTranslateClicked() {
 
     const int providerIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
     if (providerIndex >= config_.dictionary._dictStartIndex) {
+        // Look the term up without wrapping punctuation; dict.cn returns nothing for
+        // "apple." or "苹果。". The untrimmed text is kept so a miss can still be
+        // translated by the model.
+        pendingDictionaryText_ = TrimCopy(inputText);
+
         DictionaryLookupRequest request;
         request.ownerHwnd = hwnd_;
         request.provider = providerIndex == config_.dictionary._dictStartIndex
             ? DictionaryProvider::DictCn
             : DictionaryProvider::Youdao;
-        request.word = TrimCopy(inputText);
+        request.word = dictionary_heuristic::TrimLookupTerm(inputText);
 
         SetOutputText(L"");
         SetTranslating(true, L"Looking up in dictionary...");
@@ -796,9 +791,9 @@ void MainWindow::OnInputChanged() {
     const std::wstring inputText = GetWindowTextCopy(inputEdit_);
     UpdateTargetLanguageForInput(inputText);
 
-    const size_t wordCount = CountWords(inputText);
-    const size_t characterCount = CountNonWhitespaceCodePoints(inputText);
-    const bool useDictionary = wordCount == 1 && characterCount <= config_.dictionary.autoSelectMaxCharacters;
+    const std::wstring lookupTerm = dictionary_heuristic::TrimLookupTerm(inputText);
+    const bool useDictionary = dictionary_heuristic::Classify(lookupTerm, config_.dictionary.limits) ==
+        dictionary_heuristic::Verdict::UseDictionary;
 
     const int currentIndex = static_cast<int>(SendMessageW(providerCombo_, CB_GETCURSEL, 0, 0));
     int targetIndex;
@@ -928,38 +923,109 @@ void MainWindow::OnTranslateError(TranslateError* error) {
 }
 
 void MainWindow::OnDictLookupDone(DictionaryLookupResult* result) {
-    if (result != nullptr) {
-        std::wstring output;
-        output += result->word;
-        if (!result->phonetic.empty()) {
-            output += L" " + result->phonetic;
-        }
-        output += L"\r\n\r\n";
-        if (!result->definition.empty()) {
-            output += result->definition;
-        }
-        if (!result->examples.empty()) {
-            output += L"\r\n\r\n" + result->examples;
-        }
-        SetOutputText(output);
-        delete result;
-        if (!TrimCopy(output).empty()) {
-            CopyTextToClipboard(output);
-            SetTranslating(false, L"Done. Copied to clipboard.");
-            return;
+    const std::wstring sourceText = pendingDictionaryText_;
+    pendingDictionaryText_.clear();
+
+    if (result == nullptr) {
+        SetTranslating(false, L"Done.");
+        return;
+    }
+
+    const std::wstring word = result->word;
+    const std::wstring phonetic = result->phonetic;
+    const std::wstring definition = result->definition;
+    const std::wstring examples = result->examples;
+    delete result;
+
+    // The heuristic accepted the term but the dictionary has no headword for it
+    // (misspelled word, proper noun, sentence-like CJK). Translating is more useful
+    // than showing an empty result.
+    if (TrimCopy(definition).empty() && !TrimCopy(sourceText).empty() && StartFallbackTranslation(sourceText)) {
+        return;
+    }
+
+    std::wstring output = word;
+    if (!phonetic.empty()) {
+        output += L" " + phonetic;
+    }
+    if (TrimCopy(definition).empty()) {
+        output += L"\r\n\r\nNo dictionary entry found.";
+    } else {
+        output += L"\r\n\r\n" + definition;
+        if (!examples.empty()) {
+            output += L"\r\n\r\n" + examples;
         }
     }
-    SetTranslating(false, L"Done.");
+
+    SetOutputText(output);
+    CopyTextToClipboard(output);
+    SetTranslating(false, L"Done. Copied to clipboard.");
 }
 
 void MainWindow::OnDictLookupError(DictionaryLookupError* error) {
+    const std::wstring sourceText = pendingDictionaryText_;
+    pendingDictionaryText_.clear();
+
+    std::wstring lookupError;
     if (error != nullptr) {
-        SetOutputText(error->message);
-        SetTranslating(false, error->message);
+        lookupError = error->message;
         delete error;
-        return;
     }
-    SetTranslating(false, L"Dictionary lookup failed.");
+
+    // A lookup can also fail because dict.cn is unreachable; falling back to the
+    // configured model keeps the text translatable instead of stranding the user.
+    // The dictionary error is surfaced when no fallback is possible.
+    if (!TrimCopy(sourceText).empty()) {
+        if (StartFallbackTranslation(sourceText)) {
+            return;
+        }
+    }
+
+    const std::wstring message = TrimCopy(lookupError).empty() ? L"Dictionary lookup failed." : lookupError;
+    SetOutputText(message);
+    SetTranslating(false, message);
+}
+
+// Sends the pending input to the selected/default language model after the dictionary
+// could not serve it. Returns false when no model is configured, so the caller can
+// still surface the original dictionary problem.
+bool MainWindow::StartFallbackTranslation(const std::wstring& sourceText) {
+    const int providerCount = static_cast<int>(config_.llm.providers.size());
+    if (providerCount <= 0) {
+        return false;
+    }
+
+    int providerIndex = config_.dictionary._defaultLlmIndex;
+    if (providerIndex < 0 || providerIndex >= providerCount) {
+        providerIndex = 0;
+    }
+    const LlmProviderConfig& provider = config_.llm.providers[static_cast<size_t>(providerIndex)];
+    const bool needsApiKey = ResolveLlmAuthStyle(provider.protocol, provider.authStyle) != LlmAuthStyle::None;
+    if (TrimCopy(provider.baseUrl).empty() || TrimCopy(provider.model).empty() ||
+        (needsApiKey && TrimCopy(provider.apiKey).empty())) {
+        return false;
+    }
+
+    TranslateRequest request;
+    request.ownerHwnd = hwnd_;
+    request.baseUrl = provider.baseUrl;
+    request.apiKey = provider.apiKey;
+    request.model = provider.model;
+    request.protocol = provider.protocol;
+    request.authStyle = provider.authStyle;
+    request.maxTokens = provider.maxTokens;
+    request.timeoutSeconds = provider.timeoutSeconds;
+    request.stream = provider.stream;
+    request.systemPrompt = systemPromptOverride_;
+    request.sourceLanguage = config_.translate.sourceLanguage;
+    request.targetLanguage = config_.translate.targetLanguage;
+    request.temperature = provider.hasTemperature ? provider.temperature : config_.translate.temperature;
+    request.inputText = sourceText;
+
+    SetOutputText(L"");
+    SetTranslating(true, L"No dictionary entry, translating instead...");
+    StartTranslateWorker(std::move(request));
+    return true;
 }
 
 void MainWindow::LayoutControls(int clientWidth, int clientHeight) {

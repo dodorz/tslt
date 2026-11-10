@@ -5,6 +5,7 @@
 #include <vector>
 #include <windows.h>
 
+#include "DictionaryHeuristic.h"
 #include "LlmProtocol.h"
 #include "IniFile.h"
 
@@ -45,7 +46,8 @@ enum class DictionaryProvider {
 
 struct DictionaryConfig {
     DictionaryProvider provider = DictionaryProvider::DictCn;
-    size_t autoSelectMaxCharacters = 20;
+    // Thresholds deciding when the dictionary is tried before the language model.
+    dictionary_heuristic::Limits limits;
     int _defaultLlmIndex = 0;
     int _dictStartIndex = 0;
 };

@@ -53,7 +53,16 @@ inline const std::vector<std::wstring>& TranslateKeys() {
 }
 
 inline const std::vector<std::wstring>& DictionaryKeys() {
-    static const std::vector<std::wstring> keys = {L"provider", L"auto_select_max_characters"};
+    // The legacy auto_select_max_characters key still applies to every bound; the
+    // per-language keys override it individually.
+    static const std::vector<std::wstring> keys = {
+        L"provider",
+        L"auto_select_max_characters",
+        L"max_english_word_chars",
+        L"max_phrase_words",
+        L"max_phrase_chars",
+        L"max_cjk_chars",
+    };
     return keys;
 }
 
@@ -123,6 +132,10 @@ inline const std::vector<KeyAlias>& KeyAliases() {
         {L"request_timeout", L"timeout"},
         {L"read_timeout", L"timeout"},
         {L"streaming", L"stream"},
+        {L"max_single_word_chars", L"max_english_word_chars"},
+        {L"max_word_chars", L"max_english_word_chars"},
+        {L"max_chinese_chars", L"max_cjk_chars"},
+        {L"max_cjk_length", L"max_cjk_chars"},
         {L"max_output_tokens", L"max_tokens"},
         {L"max_completion_tokens", L"max_tokens"},
     };
