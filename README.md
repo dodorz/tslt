@@ -14,6 +14,9 @@
 - Separate runtime state file at `%LOCALAPPDATA%/tslt/state.dat`
 - Prompt history is available from the Prompt dialog and stored in `state.dat`
 - Optional piped stdin input preloaded into the input box
+- Keyboard shortcuts: `Ctrl+Enter` (same as the Translate button, including abort),
+  `Ctrl+W` (translate), `Ctrl+C` (load clipboard when nothing is selected),
+  `Ctrl+A` (select all), `Ctrl+Q` (quit), double `Esc` (quit)
 
 ## Build
 

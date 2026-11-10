@@ -371,6 +371,15 @@ bool MainWindow::HandleGlobalShortcut(const MSG& msg) {
         }
         OnClose();
         return true;
+    case VK_RETURN:
+        // Ctrl+Enter is the keyboard equivalent of the Translate button. It is
+        // checked before the input box inserts a newline, and it also works while the
+        // provider or target-language combo has focus.
+        if (!ctrlDown) {
+            break;
+        }
+        OnTranslateClicked();
+        return true;
     case VK_ESCAPE: {
         const DWORD now = GetTickCount();
         if (now - lastEscapeTick_ <= kEscapeExitIntervalMs) {
